@@ -127,7 +127,7 @@ def generate_cover_letter(resume_data, job_description=""):
     return response.choices[0].message.content
 
 def create_pdf_resume(resume_text):
-    """Create a PDF from resume text"""
+    """Create a beautiful, professional ATS-friendly PDF from resume text"""
     try:
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
@@ -135,39 +135,148 @@ def create_pdf_resume(resume_text):
             pagesize=letter,
             topMargin=0.5*inch, 
             bottomMargin=0.5*inch,
-            leftMargin=0.75*inch, 
-            rightMargin=0.75*inch
+            leftMargin=0.6*inch, 
+            rightMargin=0.6*inch
         )
         
+        # Get base styles
         styles = getSampleStyleSheet()
+        
+        # Create custom professional styles
+        name_style = ParagraphStyle(
+            'NameStyle',
+            parent=styles['Heading1'],
+            fontSize=20,
+            textColor='#1a1a1a',
+            spaceAfter=6,
+            alignment=1,  # CENTER
+            fontName='Helvetica-Bold'
+        )
+        
+        contact_style = ParagraphStyle(
+            'ContactStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor='#4a4a4a',
+            spaceAfter=12,
+            alignment=1,  # CENTER
+            fontName='Helvetica'
+        )
+        
+        section_header_style = ParagraphStyle(
+            'SectionHeader',
+            parent=styles['Heading2'],
+            fontSize=12,
+            textColor='#2c5aa0',
+            spaceBefore=12,
+            spaceAfter=6,
+            fontName='Helvetica-Bold',
+            borderWidth=0,
+            borderColor='#2c5aa0',
+            borderPadding=0,
+            leftIndent=0
+        )
+        
+        body_style = ParagraphStyle(
+            'BodyStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor='#333333',
+            spaceAfter=6,
+            leading=14,
+            fontName='Helvetica',
+            leftIndent=0
+        )
+        
+        bullet_style = ParagraphStyle(
+            'BulletStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor='#333333',
+            spaceAfter=4,
+            leading=13,
+            fontName='Helvetica',
+            leftIndent=20,
+            bulletIndent=10
+        )
+        
         story = []
         
-        # Split text into lines and create paragraphs
+        # Clean the resume text
+        resume_text = resume_text.replace('```', '').strip()
         lines = resume_text.split('\n')
         
-        for line in lines:
+        # Track if we've found the name yet
+        found_name = False
+        in_contact_section = False
+        line_buffer = []
+        
+        for i, line in enumerate(lines):
             line = line.strip()
             if not line:
-                story.append(Spacer(1, 0.1*inch))
                 continue
             
-            # Clean the line - remove problematic characters
-            line = line.replace('```', '').strip()
-            
-            # Escape special XML/HTML characters for ReportLab
+            # Escape special characters
             line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             
-            # Detect section headers (all caps or ends with colon)
-            if line.isupper() and len(line) > 2:
-                para = Paragraph(f"<b>{line}</b>", styles['Heading2'])
-            elif line.endswith(':') and len(line.split()) < 5:
-                para = Paragraph(f"<b>{line}</b>", styles['Heading3'])
-            else:
-                para = Paragraph(line, styles['Normal'])
+            # Detect the name (usually first non-empty line)
+            if not found_name and len(line) > 2 and not line.endswith(':'):
+                story.append(Paragraph(line.upper(), name_style))
+                found_name = True
+                in_contact_section = True
+                continue
             
-            story.append(para)
-            story.append(Spacer(1, 0.05*inch))
+            # Detect contact information (lines with email, phone, or |)
+            if in_contact_section and ('@' in line or '|' in line or '(' in line or 'linkedin' in line.lower()):
+                story.append(Paragraph(line, contact_style))
+                continue
+            else:
+                if in_contact_section:
+                    in_contact_section = False
+                    story.append(Spacer(1, 0.15*inch))
+            
+            # Detect section headers (all caps with 2+ words, or ends with colon)
+            is_section = False
+            clean_line = line.rstrip(':')
+            
+            if (line.isupper() and len(line.split()) >= 2) or \
+               (line.endswith(':') and len(line.split()) <= 4 and line.isupper()):
+                # Add line above section header
+                from reportlab.platypus import Table
+                section_line = Table([['']], colWidths=[6.5*inch])
+                section_line.setStyle([
+                    ('LINEABOVE', (0, 0), (-1, 0), 1, '#2c5aa0'),
+                    ('TOPPADDING', (0, 0), (-1, -1), 0),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+                ])
+                story.append(Spacer(1, 0.1*inch))
+                story.append(section_line)
+                story.append(Paragraph(clean_line, section_header_style))
+                is_section = True
+            
+            # Detect bullet points
+            elif line.startswith('•') or line.startswith('-') or line.startswith('*'):
+                bullet_text = line.lstrip('•-* ').strip()
+                story.append(Paragraph(f'• {bullet_text}', bullet_style))
+            
+            # Detect job title or company (typically bold patterns)
+            elif not is_section and i < len(lines) - 1:
+                next_line = lines[i + 1].strip() if i + 1 < len(lines) else ''
+                
+                # If current line looks like a title and next line has dates or location
+                if (',' in next_line or '–' in next_line or '-' in next_line or \
+                    'month' in next_line.lower() or 'year' in next_line.lower()) and \
+                    len(line.split()) <= 8:
+                    # This is likely a job title or degree
+                    story.append(Spacer(1, 0.08*inch))
+                    story.append(Paragraph(f'<b>{line}</b>', body_style))
+                else:
+                    story.append(Paragraph(line, body_style))
+            else:
+                if not is_section:
+                    story.append(Paragraph(line, body_style))
         
+        # Build the PDF
         doc.build(story)
         buffer.seek(0)
         return buffer

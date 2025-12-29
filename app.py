@@ -128,60 +128,55 @@ def generate_cover_letter(resume_data, job_description=""):
 
 def create_pdf_resume(resume_text):
     """Create a PDF from resume text"""
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter,
-                          topMargin=0.5*inch, bottomMargin=0.5*inch,
-                          leftMargin=0.75*inch, rightMargin=0.75*inch)
-    
-    styles = getSampleStyleSheet()
-    
-    # Custom styles
-    styles.add(ParagraphStyle(
-        name='CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=16,
-        textColor='#2C3E50',
-        spaceAfter=12,
-        alignment=TA_CENTER
-    ))
-    
-    styles.add(ParagraphStyle(
-        name='SectionHeader',
-        parent=styles['Heading2'],
-        fontSize=12,
-        textColor='#34495E',
-        spaceAfter=6,
-        spaceBefore=12,
-        alignment=TA_LEFT
-    ))
-    
-    styles.add(ParagraphStyle(
-        name='BodyText',
-        parent=styles['Normal'],
-        fontSize=10,
-        leading=14,
-        alignment=TA_LEFT
-    ))
-    
-    story = []
-    
-    # Parse the resume text and format it
-    lines = resume_text.split('\n')
-    for line in lines:
-        line = line.strip()
-        if not line:
-            story.append(Spacer(1, 0.1*inch))
-            continue
+    try:
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer, 
+            pagesize=letter,
+            topMargin=0.5*inch, 
+            bottomMargin=0.5*inch,
+            leftMargin=0.75*inch, 
+            rightMargin=0.75*inch
+        )
         
-        # Detect headers (all caps or ending with colon)
-        if line.isupper() or line.endswith(':'):
-            story.append(Paragraph(line, styles['SectionHeader']))
-        else:
-            story.append(Paragraph(line, styles['BodyText']))
-    
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
+        styles = getSampleStyleSheet()
+        story = []
+        
+        # Split text into lines and create paragraphs
+        lines = resume_text.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                story.append(Spacer(1, 0.1*inch))
+                continue
+            
+            # Clean the line - remove problematic characters
+            line = line.replace('```', '').strip()
+            
+            # Escape special XML/HTML characters for ReportLab
+            line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
+            # Detect section headers (all caps or ends with colon)
+            if line.isupper() and len(line) > 2:
+                para = Paragraph(f"<b>{line}</b>", styles['Heading2'])
+            elif line.endswith(':') and len(line.split()) < 5:
+                para = Paragraph(f"<b>{line}</b>", styles['Heading3'])
+            else:
+                para = Paragraph(line, styles['Normal'])
+            
+            story.append(para)
+            story.append(Spacer(1, 0.05*inch))
+        
+        doc.build(story)
+        buffer.seek(0)
+        return buffer
+        
+    except Exception as e:
+        print(f"Error creating PDF: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 @app.route('/')
 def index():
@@ -289,7 +284,10 @@ def download_pdf():
         return jsonify({'error': 'No resume text provided'}), 400
     
     try:
+        print(f"Creating PDF for text of length: {len(resume_text)}")  # Debug
         pdf_buffer = create_pdf_resume(resume_text)
+        print("PDF created successfully")  # Debug
+        
         return send_file(
             pdf_buffer,
             mimetype='application/pdf',
@@ -297,7 +295,10 @@ def download_pdf():
             download_name='ATS_Resume.pdf'
         )
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error in download-pdf route: {str(e)}")  # Debug
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to create PDF: {str(e)}'}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5002))  # Render provides PORT env variable

@@ -341,7 +341,7 @@
 
         <div class="whatsapp-banner">
             <p>📱 To get your resume, contact us on WhatsApp after generating:</p>
-            <a href="https://wa.me/919876543210?text=Hi,%20I%20want%20to%20purchase%20an%20ATS%20resume" target="_blank">
+            <a href="https://wa.me/YOUR_PHONE_NUMBER?text=Hi,%20I%20want%20to%20purchase%20an%20ATS%20resume" target="_blank">
                 <span class="whatsapp-icon">💬</span> Contact on WhatsApp
             </a>
         </div>
@@ -384,15 +384,17 @@
 
         <div class="content">
             <div class="info-box">
-                <h3>🔒 How It Works</h3>
-                <p><strong>Step 1:</strong> Upload/paste your resume information and generate preview</p>
-                <p><strong>Step 2:</strong> Contact us on WhatsApp and make payment</p>
-                <p><strong>Step 3:</strong> Receive your professional ATS resume within 24 hours</p>
+                <h3>🔒 How to Use This Tool</h3>
+                <p><strong>Step 1:</strong> Customer sends resume via WhatsApp</p>
+                <p><strong>Step 2:</strong> Upload their file or paste text here</p>
+                <p><strong>Step 3:</strong> Generate and download professional resume</p>
+                <p><strong>Step 4:</strong> Send PDF to customer via WhatsApp</p>
+                <p><strong>Step 5:</strong> Collect payment (₹499 Resume / ₹399 Cover Letter)</p>
             </div>
 
-            <div class="tabs">
-                <button class="tab active" onclick="switchTab('resume')">Generate Resume Preview</button>
-                <button class="tab" onclick="switchTab('cover')">Generate Cover Letter Preview</button>
+                            <div class="tabs">
+                <button class="tab active" onclick="switchTab('resume')">Generate Resume</button>
+                <button class="tab" onclick="switchTab('cover')">Generate Cover Letter</button>
             </div>
 
             <!-- Resume Tab -->
@@ -421,19 +423,19 @@ Include:
 - Certifications"></textarea>
 
                 <div style="text-align: center;">
-                    <button class="btn" onclick="processResume()">Generate Preview</button>
+                    <button class="btn" onclick="processResume()">🚀 Generate ATS Resume</button>
                 </div>
 
                 <div id="resumeLoading" class="loading hidden">
                     <div class="spinner"></div>
-                    <p>Generating your ATS-optimized resume preview...</p>
+                    <p>Generating your ATS-optimized resume...</p>
                 </div>
 
                 <div id="resumeResult" class="result-area hidden"></div>
 
                 <div id="resumeActions" class="hidden" style="text-align: center; margin-top: 15px;">
                     <p style="color: #718096; margin-bottom: 15px;">Like what you see? Contact us on WhatsApp to get the final PDF!</p>
-                    <a href="https://wa.me/919876543210?text=Hi,%20I%20want%20to%20purchase%20the%20ATS%20Resume%20for%20₹499" target="_blank">
+                    <a href="https://wa.me/YOUR_PHONE_NUMBER?text=Hi,%20I%20want%20to%20purchase%20the%20ATS%20Resume%20for%20₹499" target="_blank">
                         <button class="btn btn-whatsapp">💬 Order on WhatsApp - ₹499</button>
                     </a>
                 </div>
@@ -448,7 +450,7 @@ Include:
                 <textarea id="jobDescription" placeholder="(Optional) Paste the job description here to tailor your cover letter..."></textarea>
 
                 <div style="text-align: center;">
-                    <button class="btn" onclick="generateCoverLetter()">Generate Preview</button>
+                    <button class="btn" onclick="generateCoverLetter()">🚀 Generate Cover Letter</button>
                 </div>
 
                 <div id="coverLoading" class="loading hidden">
@@ -460,7 +462,7 @@ Include:
 
                 <div id="coverActions" class="hidden" style="text-align: center; margin-top: 15px;">
                     <p style="color: #718096; margin-bottom: 15px;">Like what you see? Contact us on WhatsApp to get the final PDF!</p>
-                    <a href="https://wa.me/919876543210?text=Hi,%20I%20want%20to%20purchase%20the%20Cover%20Letter%20for%20₹399" target="_blank">
+                    <a href="https://wa.me/YOUR_PHONE_NUMBER?text=Hi,%20I%20want%20to%20purchase%20the%20Cover%20Letter%20for%20₹399" target="_blank">
                         <button class="btn btn-whatsapp">💬 Order on WhatsApp - ₹399</button>
                     </a>
                 </div>
@@ -469,6 +471,9 @@ Include:
     </div>
 
     <script>
+        let currentResumeText = '';
+        let currentCoverText = '';
+
         function switchTab(tab) {
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -541,7 +546,7 @@ Include:
             const resumeInput = document.getElementById('resumeInput').value.trim();
             
             if (!resumeInput) {
-                alert('Please upload a file or paste your resume information');
+                alert('Please upload a file or paste resume information');
                 return;
             }
 
@@ -563,6 +568,7 @@ Include:
                 const data = await response.json();
                 
                 if (data.resume) {
+                    currentResumeText = data.resume;  // Store for download
                     document.getElementById('resumeResult').textContent = data.resume;
                     document.getElementById('resumeResult').classList.remove('hidden');
                     document.getElementById('resumeActions').classList.remove('hidden');
@@ -581,7 +587,7 @@ Include:
             const jobDesc = document.getElementById('jobDescription').value.trim();
             
             if (!resumeInput) {
-                alert('Please paste your resume information');
+                alert('Please paste resume information');
                 return;
             }
 
@@ -604,6 +610,7 @@ Include:
                 const data = await response.json();
                 
                 if (data.cover_letter) {
+                    currentCoverText = data.cover_letter;  // Store for download
                     document.getElementById('coverResult').textContent = data.cover_letter;
                     document.getElementById('coverResult').classList.remove('hidden');
                     document.getElementById('coverActions').classList.remove('hidden');
@@ -614,6 +621,39 @@ Include:
                 alert('Error generating cover letter: ' + error.message);
             } finally {
                 document.getElementById('coverLoading').classList.add('hidden');
+            }
+        }
+
+        async function downloadPDF(type) {
+            const text = type === 'resume' ? currentResumeText : currentCoverText;
+            
+            if (!text) {
+                alert('No content to download');
+                return;
+            }
+
+            try {
+                const response = await fetch('/download-pdf', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        resume_text: text
+                    })
+                });
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = type === 'resume' ? 'ATS_Resume.pdf' : 'Cover_Letter.pdf';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+            } catch (error) {
+                alert('Error downloading PDF: ' + error.message);
             }
         }
     </script>

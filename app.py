@@ -1,7 +1,7 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, Response
 from werkzeug.utils import secure_filename
 import os
-from groq import Groq
+from openai import OpenAI
 from docx import Document
 import PyPDF2
 from reportlab.lib.pagesizes import letter
@@ -20,13 +20,13 @@ app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'default-secret-key-change-this')
 
-# Initialize Groq client
-groq_api_key = os.getenv('GROQ_API_KEY')
+# Initialize OpenAI client
+openai_api_key = os.getenv('OPENAI_API_KEY')
 
-if not groq_api_key:
-    raise ValueError("GROQ_API_KEY not found in environment variables. Please check your .env file.")
+if not openai_api_key:
+    raise ValueError("OPENAI_API_KEY not found in environment variables. Please check your .env file.")
 
-client = Groq(api_key=groq_api_key)
+client = OpenAI(api_key=openai_api_key)
 
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc'}
 
@@ -49,7 +49,7 @@ def extract_text_from_docx(file_path):
     return '\n'.join(text)
 
 def generate_ats_resume(resume_data):
-    """Generate ATS-friendly resume using Groq"""
+    """Generate ATS-friendly resume using OpenAI"""
     prompt = f"""
     You are an expert resume writer specializing in ATS-friendly resumes. 
     Based on the following information, create a well-structured, ATS-optimized resume.
@@ -70,7 +70,8 @@ def generate_ats_resume(resume_data):
     Make it ATS-friendly by using standard section names and avoiding special characters.
     """
     
-    chat_completion = client.chat.completions.create(
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
@@ -81,15 +82,14 @@ def generate_ats_resume(resume_data):
                 "content": prompt
             }
         ],
-        model="llama-3.3-70b-versatile",
         temperature=0.7,
         max_tokens=2000
     )
     
-    return chat_completion.choices[0].message.content
+    return response.choices[0].message.content
 
 def generate_cover_letter(resume_data, job_description=""):
-    """Generate cover letter using Groq"""
+    """Generate cover letter using OpenAI"""
     prompt = f"""
     Based on the following resume information, create a professional cover letter.
     
@@ -108,7 +108,8 @@ def generate_cover_letter(resume_data, job_description=""):
     Keep it professional and concise (3-4 paragraphs).
     """
     
-    chat_completion = client.chat.completions.create(
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
         messages=[
             {
                 "role": "system",
@@ -119,12 +120,11 @@ def generate_cover_letter(resume_data, job_description=""):
                 "content": prompt
             }
         ],
-        model="llama-3.3-70b-versatile",
         temperature=0.7,
         max_tokens=1500
     )
     
-    return chat_completion.choices[0].message.content
+    return response.choices[0].message.content
 
 def create_pdf_resume(resume_text):
     """Create a PDF from resume text"""
@@ -300,4 +300,5 @@ def download_pdf():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5002)  # Changed to port 5002 to avoid cache
+    port = int(os.environ.get('PORT', 5002))  # Render provides PORT env variable
+    app.run(host='0.0.0.0', port=port, debug=False)  # host='0.0.0.0' allows external access

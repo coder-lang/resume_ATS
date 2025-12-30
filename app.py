@@ -1,52 +1,65 @@
+
+# app.py
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 import os
-from openai import OpenAI
-from docx import Document
-from docx.shared import Pt, RGBColor, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-import PyPDF2
 import io
-from dotenv import load_dotenv
 import json
-import re
+import PyPDF2
+from dotenv import load_dotenv
 
+from openai import OpenAI
+
+from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.style import WD_STYLE_TYPE
+
+# ---------------------------
+# App & configuration
+# ---------------------------
 load_dotenv()
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
 
-# Initialize OpenAI
-openai_api_key = os.getenv('OPENAI_API_KEY')
-if not openai_api_key:
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY not found")
 
-client = OpenAI(api_key=openai_api_key)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt'}
+ALLOWED_EXTENSIONS = {'pdf', 'docx', 'txt'}  # reliable formats
 TEMPLATE_PATH = 'resume_template.docx'
 
-def allowed_file(filename):
+# ---------------------------
+# Helpers: uploads & parsing
+# ---------------------------
+def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def extract_text_from_pdf(file_path):
+def extract_text_from_pdf(file_path: str) -> str:
     text = ""
-    with open(file_path, 'rb') as file:
-        pdf_reader = PyPDF2.PdfReader(file)
+    with open(file_path, 'rb') as f:
+        pdf_reader = PyPDF2.PdfReader(f)
         for page in pdf_reader.pages:
-            text += page.extract_text()
+            page_text = page.extract_text() or ""
+            text += page_text
     return text
 
-def extract_text_from_docx(file_path):
+def extract_text_from_docx(file_path: str) -> str:
     doc = Document(file_path)
-    return '\n'.join([paragraph.text for paragraph in doc.paragraphs])
+    return '\n'.join([p.text for p in doc.paragraphs])
 
-def extract_resume_data_with_ai(resume_text):
-    """Use AI to extract structured data from messy resume"""
+# ---------------------------
+# Helpers: AI extraction
+# ---------------------------
+def extract_resume_data_with_ai(resume_text: str) -> dict:
+    """
+    Use AI to extract structured data from the resume; return dict.
+    """
     prompt = f"""Extract structured information from this resume and return ONLY a JSON object with this exact format:
-
 {{
   "name": "Full Name",
   "email": "email@example.com",
@@ -89,12 +102,10 @@ def extract_resume_data_with_ai(resume_text):
   "computer_skills": ["Skill 1", "Skill 2", "Skill 3"],
   "interests": ["Interest 1", "Interest 2", "Interest 3"]
 }}
-
 Resume Text:
 {resume_text}
-
-Return ONLY the JSON object, no other text."""
-
+Return ONLY the JSON object, no other text.
+"""
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -105,46 +116,131 @@ Return ONLY the JSON object, no other text."""
             temperature=0.3,
             max_tokens=2000
         )
-        
         result = response.choices[0].message.content.strip()
-        # Remove markdown code blocks if present
-        if result.startswith('```'):
-            result = result.split('```')[1]
-            if result.startswith('json'):
-                result = result[4:]
-        
+
+        # Strip markdown fences if present
+        if result.startswith("```"):
+            parts = result.split("```")
+            # pick the largest chunk (usually the JSON)
+            result = max(parts, key=len)
+        if result.lower().startswith("json"):
+            result = result[4:].strip()
+
         data = json.loads(result)
         return data
+
+    except json.JSONDecodeError as je:
+        raise ValueError(f"AI returned invalid JSON: {je}")
     except Exception as e:
         print(f"AI extraction error: {str(e)}")
         raise
 
-def fill_word_template(data):
-    """Fill the Word template with extracted data"""
-    # Load template
+# ---------------------------
+# Helpers: Word template ops
+# ---------------------------
+
+BULLET_STYLE_CANDIDATES = ['List Bullet', 'List Paragraph', 'Normal']
+
+def set_bullet_style(p, doc):
+    """
+    Tries to apply a list/bullet style. Falls back gracefully if a style is missing.
+    """
+    for style_name in BULLET_STYLE_CANDIDATES:
+        try:
+            p.style = doc.styles[style_name]
+            return
+        except KeyError:
+            continue
+    # Visual fallback if no list style exists
+    if p.text.strip() and not p.text.strip().startswith('•'):
+        p.text = f'• {p.text}'
+
+def non_empty_list(items):
+    return [str(x).strip() for x in (items or []) if x and str(x).strip()]
+
+def replace_in_paragraph(paragraph, replacements: dict):
+    """
+    Replace placeholders in a paragraph. This approach re-sets runs to preserve correctness
+    when placeholders are split across runs (sacrifices mixed formatting within the line).
+    """
+    text = paragraph.text
+    replaced = False
+    for key, value in replacements.items():
+        if key in text:
+            text = text.replace(key, str(value))
+            replaced = True
+    if replaced:
+        # Remove existing runs
+        while paragraph.runs:
+            run = paragraph.runs[0]
+            run._element.getparent().remove(run._element)
+        # Add single run with replaced text
+        paragraph.add_run(text)
+
+def replace_text_in_doc(doc: Document, replacements: dict):
+    for paragraph in doc.paragraphs:
+        replace_in_paragraph(paragraph, replacements)
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    replace_in_paragraph(paragraph, replacements)
+
+def find_header_index(doc: Document, header_text: str):
+    for i, p in enumerate(doc.paragraphs):
+        if p.text.strip() == header_text:
+            return i
+    return None
+
+def remove_between(doc: Document, start_header: str, end_header: str):
+    """
+    Remove all paragraphs strictly between start_header and end_header.
+    If end_header is None or not found, remove until the end of document.
+    """
+    start_idx = find_header_index(doc, start_header)
+    end_idx = find_header_index(doc, end_header) if end_header else None
+
+    if start_idx is None:
+        return
+
+    # Determine removal range
+    if end_idx is None:
+        # remove everything after start header
+        while len(doc.paragraphs) > start_idx + 1:
+            target = doc.paragraphs[start_idx + 1]
+            target._element.getparent().remove(target._element)
+    else:
+        count = end_idx - start_idx - 1
+        for _ in range(max(0, count)):
+            target = doc.paragraphs[start_idx + 1]
+            target._element.getparent().remove(target._element)
+
+def insert_before_index(doc: Document, idx: int, text: str = ""):
+    """
+    Insert a paragraph before the paragraph at 'idx'. If idx is None,
+    append at the end of the document.
+    """
+    if idx is None or idx >= len(doc.paragraphs):
+        p = doc.add_paragraph(text)
+        return p
+    anchor = doc.paragraphs[idx]
+    p = anchor.insert_paragraph_before(text)
+    return p
+
+def fill_word_template(data: dict) -> io.BytesIO:
+    """
+    Fill the Word template with extracted data and rebuild sections.
+    """
     doc = Document(TEMPLATE_PATH)
-    
-    # Helper function to replace text in paragraphs
-    def replace_in_paragraph(paragraph, replacements):
-        for key, value in replacements.items():
-            if key in paragraph.text:
-                # Replace text while preserving formatting
-                inline = paragraph.runs
-                for run in inline:
-                    if key in run.text:
-                        run.text = run.text.replace(key, str(value))
-    
-    # Helper function to replace text in entire document
-    def replace_text_in_doc(doc, replacements):
-        for paragraph in doc.paragraphs:
-            replace_in_paragraph(paragraph, replacements)
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for paragraph in cell.paragraphs:
-                        replace_in_paragraph(paragraph, replacements)
-    
-    # Create replacements dictionary
+
+    # Log style inventory once for diagnostics
+    try:
+        para_styles = [s.name for s in doc.styles if getattr(s, 'type', None) == WD_STYLE_TYPE.PARAGRAPH]
+        print("Template paragraph styles:", para_styles)
+    except Exception:
+        pass
+
+    # Replacements for header fields/placeholders present in your template
     replacements = {
         'Your Name': data.get('name', 'Your Name'),
         '555 Your Address, NY 10005': data.get('address', ''),
@@ -158,204 +254,251 @@ def fill_word_template(data):
         'Expected Graduation: Mnth Year': f"Expected Graduation: {data.get('graduation_date', 'Mnth Year')}",
         'Your Minor: DEF': f"Your Minor: {data.get('minor', 'DEF')}" if data.get('minor') else 'Your Minor: ',
     }
-    
-    # Replace basic info
+
+    # Replace simple placeholders
     replace_text_in_doc(doc, replacements)
-    
-    # Find and update specific sections
-    for i, paragraph in enumerate(doc.paragraphs):
-        # Update Honors/Awards
-        if 'Honors/Awards:' in paragraph.text and data.get('honors'):
-            honors_text = ', '.join(sorted(data['honors']))
-            paragraph.text = f"Honors/Awards: {honors_text}"
-            
-        # Update Scholarships
-        elif 'Scholarships:' in paragraph.text and data.get('scholarships'):
-            scholarships_text = ', '.join(sorted(data['scholarships']))
-            paragraph.text = f"Scholarships: {scholarships_text}"
-            
-        # Update Relevant Coursework
-        elif 'Relevant Coursework:' in paragraph.text and data.get('coursework'):
-            coursework_text = ', '.join(sorted(data['coursework']))
-            paragraph.text = f"Relevant Coursework: {coursework_text}"
-    
-    # Clear existing experience/leadership sections and rebuild
-    # Find EXPERIENCE section
-    exp_start_idx = None
-    leadership_start_idx = None
-    skills_start_idx = None
-    
-    for i, paragraph in enumerate(doc.paragraphs):
-        if paragraph.text.strip() == 'EXPERIENCE':
-            exp_start_idx = i
-        elif paragraph.text.strip() == 'LEADERSHIP & PROFESSIONAL DEVELOPMENT':
-            leadership_start_idx = i
-        elif paragraph.text.strip() == 'SKILLS & INTERESTS':
-            skills_start_idx = i
-    
-    # Rebuild EXPERIENCE section
-    if exp_start_idx is not None and data.get('experience'):
-        # Delete old content between EXPERIENCE and LEADERSHIP
-        end_idx = leadership_start_idx if leadership_start_idx else skills_start_idx
-        if end_idx:
-            for _ in range(end_idx - exp_start_idx - 1):
-                doc.paragraphs[exp_start_idx + 1]._element.getparent().remove(doc.paragraphs[exp_start_idx + 1]._element)
-        
-        # Add new experience entries
-        for job in data['experience']:
-            # Company header
-            p = doc.paragraphs[exp_start_idx].insert_paragraph_before('')
-            p.add_run(f"{job.get('company', 'Company Name')}").bold = True
-            p.add_run(f" {job.get('location', '')}").italic = True
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            
-            # Position and dates
-            p = doc.paragraphs[exp_start_idx].insert_paragraph_before('')
-            run1 = p.add_run(f"{job.get('position', 'Position')}, {job.get('detail', '')}")
-            run1.italic = True
-            p.add_run(f" {job.get('start_date', 'Mnth Yr')} -- {job.get('end_date', 'Present')}")
-            
-            # Responsibilities as bullets
-            if job.get('responsibilities'):
-                for resp in job['responsibilities']:
-                    p = doc.paragraphs[exp_start_idx].insert_paragraph_before(resp)
-                    p.style = 'List Bullet'
-            
-            # Spacing
-            doc.paragraphs[exp_start_idx].insert_paragraph_before('')
-    
-    # Rebuild LEADERSHIP section
-    if leadership_start_idx is not None and data.get('leadership'):
-        # Find new leadership index after rebuilding experience
-        leadership_start_idx = None
-        for i, paragraph in enumerate(doc.paragraphs):
-            if paragraph.text.strip() == 'LEADERSHIP & PROFESSIONAL DEVELOPMENT':
-                leadership_start_idx = i
-                break
-        
-        if leadership_start_idx:
-            # Delete old content
-            skills_start_idx = None
-            for i, paragraph in enumerate(doc.paragraphs):
-                if paragraph.text.strip() == 'SKILLS & INTERESTS':
-                    skills_start_idx = i
-                    break
-            
-            if skills_start_idx:
-                for _ in range(skills_start_idx - leadership_start_idx - 1):
-                    doc.paragraphs[leadership_start_idx + 1]._element.getparent().remove(doc.paragraphs[leadership_start_idx + 1]._element)
-            
-            # Add new leadership entries
-            for activity in data['leadership']:
-                # Organization header
-                p = doc.paragraphs[leadership_start_idx].insert_paragraph_before('')
-                p.add_run(f"{activity.get('organization', 'Organization')}").bold = True
-                p.add_run(f" {activity.get('location', '')}").italic = True
-                
-                # Position and dates
-                p = doc.paragraphs[leadership_start_idx].insert_paragraph_before('')
-                run1 = p.add_run(f"{activity.get('position', 'Position')}, {activity.get('detail', '')}")
-                run1.italic = True
-                p.add_run(f" {activity.get('start_date', 'Mnth Yr')} -- {activity.get('end_date', 'Present')}")
-                
-                # Responsibilities as bullets
-                if activity.get('responsibilities'):
-                    for resp in activity['responsibilities']:
-                        p = doc.paragraphs[leadership_start_idx].insert_paragraph_before(resp)
-                        p.style = 'List Bullet'
-                
-                # Spacing
-                doc.paragraphs[leadership_start_idx].insert_paragraph_before('')
-            
-            # Add affiliations if present
-            if data.get('affiliations'):
-                p = doc.paragraphs[leadership_start_idx].insert_paragraph_before('')
-                p.add_run('Other Affiliations: ').bold = True
-                p.add_run(', '.join(sorted(data['affiliations'])))
-    
-    # Update SKILLS section
+
+    # Update line-level composite sections
     for paragraph in doc.paragraphs:
-        if 'Language:' in paragraph.text and data.get('languages'):
-            paragraph.text = f"Language: {', '.join(data['languages'])}"
-        elif 'Computer:' in paragraph.text and data.get('computer_skills'):
-            paragraph.text = f"Computer: {', '.join(data['computer_skills'])}"
-        elif 'Interests:' in paragraph.text and data.get('interests'):
-            paragraph.text = f"Interests: {', '.join(sorted(data['interests']))}"
-    
+        t = paragraph.text
+        if 'Honors/Awards:' in t and data.get('honors'):
+            honors_text = ', '.join(sorted(non_empty_list(data.get('honors'))))
+            paragraph.text = f"Honors/Awards: {honors_text}"
+        elif 'Scholarships:' in t and data.get('scholarships'):
+            scholarships_text = ', '.join(sorted(non_empty_list(data.get('scholarships'))))
+            paragraph.text = f"Scholarships: {scholarships_text}"
+        elif 'Relevant Coursework:' in t and data.get('coursework'):
+            coursework_text = ', '.join(sorted(non_empty_list(data.get('coursework'))))
+            paragraph.text = f"Relevant Coursework: {coursework_text}"
+
+    # Compute key header indices
+    exp_header = 'EXPERIENCE'
+    lead_header = 'LEADERSHIP & PROFESSIONAL DEVELOPMENT'
+    skills_header = 'SKILLS & INTERESTS'
+
+    exp_idx = find_header_index(doc, exp_header)
+    lead_idx = find_header_index(doc, lead_header)
+    skills_idx = find_header_index(doc, skills_header)
+
+    # ---------------------------
+    # Rebuild EXPERIENCE section
+    # ---------------------------
+    if exp_idx is not None and data.get('experience'):
+        # Remove everything between EXPERIENCE and the next header (LEADERSHIP or SKILLS)
+        end_header = lead_header if lead_idx is not None else skills_header if skills_idx is not None else None
+        remove_between(doc, exp_header, end_header)
+
+        # Choose insertion anchor: right before the next header (or append if none)
+        insert_anchor_idx = find_header_index(doc, end_header) if end_header else None
+
+        for job in data.get('experience', []):
+            company = job.get('company', 'Company Name')
+            location = job.get('location', '')
+            position = job.get('position', 'Position')
+            detail = job.get('detail', '')
+            start_date = job.get('start_date', 'Mnth Yr')
+            end_date = job.get('end_date', 'Present')
+
+            # Company header line
+            p = insert_before_index(doc, insert_anchor_idx, "")
+            p.add_run(f"{company}").bold = True
+            if location:
+                r = p.add_run(f" {location}")
+                r.italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+            # Position + dates line
+            p = insert_before_index(doc, insert_anchor_idx, "")
+            run1 = p.add_run(f"{position}, {detail}" if detail else f"{position}")
+            run1.italic = True
+            p.add_run(f" {start_date} -- {end_date}")
+
+            # Responsibilities bullets
+            for resp in non_empty_list(job.get('responsibilities')):
+                bp = insert_before_index(doc, insert_anchor_idx, resp)
+                set_bullet_style(bp, doc)
+
+            # Spacer (single blank line)
+            insert_before_index(doc, insert_anchor_idx, "")
+
+    # ---------------------------
+    # Rebuild LEADERSHIP section
+    # ---------------------------
+    # Recompute indices in case EXPERIENCE changes shifted them
+    lead_idx = find_header_index(doc, lead_header)
+    skills_idx = find_header_index(doc, skills_header)
+
+    if lead_idx is not None and data.get('leadership'):
+        # Remove content between LEADERSHIP and SKILLS
+        remove_between(doc, lead_header, skills_header if skills_idx is not None else None)
+
+        # Insert before SKILLS or append
+        insert_anchor_idx = find_header_index(doc, skills_header) if skills_idx is not None else None
+
+        for activity in data.get('leadership', []):
+            org = activity.get('organization', 'Organization')
+            location = activity.get('location', '')
+            position = activity.get('position', 'Position')
+            detail = activity.get('detail', '')
+            start_date = activity.get('start_date', 'Mnth Yr')
+            end_date = activity.get('end_date', 'Present')
+
+            # Organization header line
+            p = insert_before_index(doc, insert_anchor_idx, "")
+            p.add_run(f"{org}").bold = True
+            if location:
+                r = p.add_run(f" {location}")
+                r.italic = True
+
+            # Position + dates line
+            p = insert_before_index(doc, insert_anchor_idx, "")
+            run1 = p.add_run(f"{position}, {detail}" if detail else f"{position}")
+            run1.italic = True
+            p.add_run(f" {start_date} -- {end_date}")
+
+            # Responsibilities bullets
+            for resp in non_empty_list(activity.get('responsibilities')):
+                bp = insert_before_index(doc, insert_anchor_idx, resp)
+                set_bullet_style(bp, doc)
+
+            # Spacer
+            insert_before_index(doc, insert_anchor_idx, "")
+
+        # Add affiliations under leadership if present
+        affs = non_empty_list(data.get('affiliations'))
+        if affs:
+            p = insert_before_index(doc, insert_anchor_idx, "")
+            p.add_run('Other Affiliations: ').bold = True
+            p.add_run(', '.join(sorted(affs)))
+
+    # ---------------------------
+    # Update SKILLS section lines
+    # ---------------------------
+    languages = non_empty_list(data.get('languages'))
+    computers = non_empty_list(data.get('computer_skills'))
+    interests = non_empty_list(data.get('interests'))
+
+    for paragraph in doc.paragraphs:
+        t = paragraph.text
+        if 'Language:' in t and languages:
+            paragraph.text = f"Language: {', '.join(languages)}"
+        elif 'Computer:' in t and computers:
+            paragraph.text = f"Computer: {', '.join(computers)}"
+        elif 'Interests:' in t and interests:
+            paragraph.text = f"Interests: {', '.join(sorted(interests))}"
+
     # Save to buffer
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer
 
+# ---------------------------
+# Validation for /generate-word
+# ---------------------------
+REQUIRED_FIELDS = ['name', 'email']
+
+def validate_structured_data(data: dict):
+    if not isinstance(data, dict):
+        raise ValueError("Payload must be a JSON object")
+    missing = [k for k in REQUIRED_FIELDS if not str(data.get(k, '')).strip()]
+    if missing:
+        raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
+# ---------------------------
+# Routes
+# ---------------------------
 @app.route('/')
 def index():
     return render_template('hybrid_form.html')
 
 @app.route('/upload-and-extract', methods=['POST'])
 def upload_and_extract():
-    """Upload resume and extract structured data with AI"""
+    """
+    Upload resume and extract structured data with AI.
+    """
     try:
         resume_text = ""
-        
+
         # Handle file upload
         if 'file' in request.files:
             file = request.files['file']
             if file and file.filename and allowed_file(file.filename):
                 filename = secure_filename(file.filename)
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-                
                 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
                 file.save(filepath)
-                
-                if filename.endswith('.pdf'):
+
+                if filename.lower().endswith('.pdf'):
                     resume_text = extract_text_from_pdf(filepath)
-                elif filename.endswith(('.docx', '.doc')):
+                elif filename.lower().endswith('.docx'):
                     resume_text = extract_text_from_docx(filepath)
-                
-                os.remove(filepath)
-        
+
+                # Clean up temp file
+                try:
+                    os.remove(filepath)
+                except Exception:
+                    pass
+
         # Handle text input
         if not resume_text and request.form.get('text_input'):
             resume_text = request.form.get('text_input')
-        
+
         if not resume_text:
             return jsonify({'error': 'No resume data provided'}), 400
-        
-        # Extract structured data with AI
+
         print("Extracting data with AI...")
         structured_data = extract_resume_data_with_ai(resume_text)
-        print("Extraction successful:", json.dumps(structured_data, indent=2))
-        
+
+        # Avoid logging PII-heavy content; log keys only
+        print("Extraction successful. Keys:", list(structured_data.keys()))
+
         return jsonify(structured_data)
-        
+
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
     except Exception as e:
         print(f"Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        import traceback; traceback.print_exc()
+        return jsonify({'error': 'Unexpected server error'}), 500
 
 @app.route('/generate-word', methods=['POST'])
 def generate_word():
-    """Generate Word document from structured data using template"""
+    """
+    Generate Word document from structured data using template.
+    """
     try:
-        data = request.json
+        data = request.get_json(force=True)
+        validate_structured_data(data)
         print("Generating Word document from template...")
-        
         word_buffer = fill_word_template(data)
-        
         return send_file(
             word_buffer,
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             as_attachment=True,
             download_name='ATS_Resume.docx'
         )
+    except ValueError as ve:
+        return jsonify({'error': str(ve)}), 400
     except Exception as e:
         print(f"Error generating Word document: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        import traceback; traceback.print_exc()
+        return jsonify({'error': 'Unexpected server error'}), 500
 
+# ---------------------------
+# Entrypoint
+# ---------------------------
 if __name__ == '__main__':
+    # Startup diagnostics: show styles present in template
+    try:
+        if os.path.exists(TEMPLATE_PATH):
+            d = Document(TEMPLATE_PATH)
+            styles_present = [s.name for s in d.styles if getattr(s, 'type', None) == WD_STYLE_TYPE.PARAGRAPH]
+            print("Template paragraph styles at startup:", styles_present)
+        else:
+            print(f"Template not found at path: {TEMPLATE_PATH}")
+    except Exception as e:
+        print(f"Could not inspect template styles: {e}")
+
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

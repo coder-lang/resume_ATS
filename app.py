@@ -3,16 +3,13 @@ from werkzeug.utils import secure_filename
 import os
 from openai import OpenAI
 from docx import Document
+from docx.shared import Pt, RGBColor, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 import PyPDF2
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
-from reportlab.lib.colors import HexColor
 import io
 from dotenv import load_dotenv
 import json
+import re
 
 load_dotenv()
 
@@ -29,6 +26,7 @@ if not openai_api_key:
 client = OpenAI(api_key=openai_api_key)
 
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'doc', 'txt'}
+TEMPLATE_PATH = 'resume_template.docx'
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -53,34 +51,43 @@ def extract_resume_data_with_ai(resume_text):
   "name": "Full Name",
   "email": "email@example.com",
   "phone": "phone number",
+  "address": "Full Address",
+  "university": "University Name",
+  "college": "College/School Name",
+  "gpa": "GPA (e.g., 3.85)",
   "location": "City, State",
-  "linkedin": "linkedin url or github",
-  "summary": "2-3 sentence professional summary",
+  "major": "Major Name",
+  "graduation_date": "Month Year",
+  "minor": "Minor Name (if any)",
+  "honors": ["Honor 1", "Honor 2", "Honor 3"],
+  "scholarships": ["Scholarship 1", "Scholarship 2"],
+  "coursework": ["Course 1", "Course 2", "Course 3"],
   "experience": [
     {{
-      "title": "Job Title",
       "company": "Company Name",
       "location": "City, State",
-      "dates": "Start - End",
+      "position": "Job Title",
+      "detail": "Additional detail about role",
+      "start_date": "Mnth Yr",
+      "end_date": "Mnth Yr or Present",
       "responsibilities": ["achievement 1", "achievement 2", "achievement 3"]
     }}
   ],
-  "education": [
+  "leadership": [
     {{
-      "degree": "Degree Name",
-      "institution": "University Name",
+      "organization": "Organization Name",
       "location": "City, State",
-      "year": "Graduation Year",
-      "details": "GPA, honors, etc"
+      "position": "Role/Position",
+      "detail": "Additional detail",
+      "start_date": "Mnth Yr",
+      "end_date": "Mnth Yr or Present",
+      "responsibilities": ["responsibility 1", "responsibility 2"]
     }}
   ],
-  "skills": [
-    {{
-      "category": "Category Name",
-      "items": ["skill1", "skill2", "skill3"]
-    }}
-  ],
-  "certifications": ["cert 1", "cert 2"]
+  "affiliations": ["Affiliation 1", "Affiliation 2"],
+  "languages": ["Language and proficiency"],
+  "computer_skills": ["Skill 1", "Skill 2", "Skill 3"],
+  "interests": ["Interest 1", "Interest 2", "Interest 3"]
 }}
 
 Resume Text:
@@ -112,284 +119,172 @@ Return ONLY the JSON object, no other text."""
         print(f"AI extraction error: {str(e)}")
         raise
 
-def create_ats_resume_pdf(data):
-    """Create beautiful, modern ATS-friendly resume from template"""
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=letter,
-        topMargin=0.4*inch,
-        bottomMargin=0.4*inch,
-        leftMargin=0.6*inch,
-        rightMargin=0.6*inch
-    )
+def fill_word_template(data):
+    """Fill the Word template with extracted data"""
+    # Load template
+    doc = Document(TEMPLATE_PATH)
     
-    # Modern Color Scheme
-    primary_color = HexColor('#2563eb')      # Vibrant blue
-    accent_color = HexColor('#059669')       # Green accent
-    dark_text = HexColor('#111827')          # Almost black
-    medium_gray = HexColor('#6b7280')        # Medium gray
-    light_bg = HexColor('#f3f4f6')           # Light background
+    # Helper function to replace text in paragraphs
+    def replace_in_paragraph(paragraph, replacements):
+        for key, value in replacements.items():
+            if key in paragraph.text:
+                # Replace text while preserving formatting
+                inline = paragraph.runs
+                for run in inline:
+                    if key in run.text:
+                        run.text = run.text.replace(key, str(value))
     
-    # Styles
-    styles = getSampleStyleSheet()
+    # Helper function to replace text in entire document
+    def replace_text_in_doc(doc, replacements):
+        for paragraph in doc.paragraphs:
+            replace_in_paragraph(paragraph, replacements)
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        replace_in_paragraph(paragraph, replacements)
     
-    # Name - Large and bold
-    name_style = ParagraphStyle(
-        'Name',
-        parent=styles['Heading1'],
-        fontSize=26,
-        textColor=primary_color,
-        spaceAfter=4,
-        alignment=TA_CENTER,
-        fontName='Helvetica-Bold',
-        leading=30
-    )
+    # Create replacements dictionary
+    replacements = {
+        'Your Name': data.get('name', 'Your Name'),
+        '555 Your Address, NY 10005': data.get('address', ''),
+        'your-email@gmail.edu': data.get('email', ''),
+        '555.555.5555': data.get('phone', ''),
+        'Your University': data.get('university', 'Your University'),
+        'Your College/School': data.get('college', 'Your College/School'),
+        '3._ _': data.get('gpa', '3._ _'),
+        'City, State': data.get('location', 'City, State'),
+        'Your Major: Bachelor of XYZ, ABC': f"Your Major: {data.get('major', 'Bachelor of XYZ, ABC')}",
+        'Expected Graduation: Mnth Year': f"Expected Graduation: {data.get('graduation_date', 'Mnth Year')}",
+        'Your Minor: DEF': f"Your Minor: {data.get('minor', 'DEF')}" if data.get('minor') else 'Your Minor: ',
+    }
     
-    # Contact - Clean and centered
-    contact_style = ParagraphStyle(
-        'Contact',
-        parent=styles['Normal'],
-        fontSize=10,
-        textColor=dark_text,
-        spaceAfter=16,
-        alignment=TA_CENTER,
-        fontName='Helvetica'
-    )
+    # Replace basic info
+    replace_text_in_doc(doc, replacements)
     
-    # Section Headers - Bold with color
-    section_header = ParagraphStyle(
-        'SectionHeader',
-        parent=styles['Heading2'],
-        fontSize=13,
-        textColor=primary_color,
-        spaceBefore=16,
-        spaceAfter=8,
-        fontName='Helvetica-Bold',
-        borderWidth=0,
-        borderPadding=0,
-        leftIndent=0,
-        leading=15
-    )
+    # Find and update specific sections
+    for i, paragraph in enumerate(doc.paragraphs):
+        # Update Honors/Awards
+        if 'Honors/Awards:' in paragraph.text and data.get('honors'):
+            honors_text = ', '.join(sorted(data['honors']))
+            paragraph.text = f"Honors/Awards: {honors_text}"
+            
+        # Update Scholarships
+        elif 'Scholarships:' in paragraph.text and data.get('scholarships'):
+            scholarships_text = ', '.join(sorted(data['scholarships']))
+            paragraph.text = f"Scholarships: {scholarships_text}"
+            
+        # Update Relevant Coursework
+        elif 'Relevant Coursework:' in paragraph.text and data.get('coursework'):
+            coursework_text = ', '.join(sorted(data['coursework']))
+            paragraph.text = f"Relevant Coursework: {coursework_text}"
     
-    # Job Title - Prominent
-    job_title_style = ParagraphStyle(
-        'JobTitle',
-        fontSize=12,
-        textColor=dark_text,
-        spaceAfter=3,
-        fontName='Helvetica-Bold',
-        leading=14
-    )
+    # Clear existing experience/leadership sections and rebuild
+    # Find EXPERIENCE section
+    exp_start_idx = None
+    leadership_start_idx = None
+    skills_start_idx = None
     
-    # Company/Institution - Elegant
-    company_style = ParagraphStyle(
-        'Company',
-        fontSize=10,
-        textColor=medium_gray,
-        spaceAfter=7,
-        fontName='Helvetica-Oblique',
-        leading=12
-    )
+    for i, paragraph in enumerate(doc.paragraphs):
+        if paragraph.text.strip() == 'EXPERIENCE':
+            exp_start_idx = i
+        elif paragraph.text.strip() == 'LEADERSHIP & PROFESSIONAL DEVELOPMENT':
+            leadership_start_idx = i
+        elif paragraph.text.strip() == 'SKILLS & INTERESTS':
+            skills_start_idx = i
     
-    # Body text - Readable
-    body_style = ParagraphStyle(
-        'Body',
-        fontSize=10,
-        textColor=dark_text,
-        spaceAfter=8,
-        leading=15,
-        fontName='Helvetica',
-        alignment=TA_JUSTIFY
-    )
-    
-    # Bullet points - Clean
-    bullet_style = ParagraphStyle(
-        'Bullet',
-        fontSize=10,
-        textColor=dark_text,
-        spaceAfter=5,
-        leading=14,
-        fontName='Helvetica',
-        leftIndent=20,
-        bulletIndent=8
-    )
-    
-    # Skills inline style
-    skills_style = ParagraphStyle(
-        'Skills',
-        fontSize=10,
-        textColor=dark_text,
-        spaceAfter=6,
-        leading=14,
-        fontName='Helvetica'
-    )
-    
-    story = []
-    
-    # ==================== HEADER ====================
-    # Name - Big and bold
-    name = data.get('name', 'Name Not Provided')
-    story.append(Paragraph(name.upper(), name_style))
-    
-    # Contact Info - One clean line
-    contact_parts = []
-    if data.get('email'):
-        contact_parts.append(data['email'])
-    if data.get('phone'):
-        contact_parts.append(data['phone'])
-    if data.get('location'):
-        contact_parts.append(data['location'])
-    if data.get('linkedin'):
-        linkedin = data['linkedin'].replace('https://', '').replace('http://', '')
-        contact_parts.append(linkedin)
-    
-    if contact_parts:
-        contact_text = ' • '.join(contact_parts)  # Using bullet separator
-        story.append(Paragraph(contact_text, contact_style))
-    
-    # Decorative line under header
-    page_width = letter[0] - 1.2*inch
-    header_line = Table([['']], colWidths=[page_width])
-    header_line.setStyle(TableStyle([
-        ('LINEBELOW', (0, 0), (-1, -1), 2.5, primary_color),
-        ('TOPPADDING', (0, 0), (-1, -1), 0),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
-    ]))
-    story.append(header_line)
-    
-    # ==================== PROFESSIONAL SUMMARY ====================
-    if data.get('summary'):
-        story.append(Spacer(1, 0.1*inch))
+    # Rebuild EXPERIENCE section
+    if exp_start_idx is not None and data.get('experience'):
+        # Delete old content between EXPERIENCE and LEADERSHIP
+        end_idx = leadership_start_idx if leadership_start_idx else skills_start_idx
+        if end_idx:
+            for _ in range(end_idx - exp_start_idx - 1):
+                doc.paragraphs[exp_start_idx + 1]._element.getparent().remove(doc.paragraphs[exp_start_idx + 1]._element)
         
-        # Section with colored background effect using table
-        summary_text = data['summary'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        
-        # Add section header
-        story.append(Paragraph('PROFESSIONAL SUMMARY', section_header))
-        
-        # Add thin line under section
-        section_line = Table([['']], colWidths=[1.8*inch])
-        section_line.setStyle(TableStyle([
-            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
-            ('TOPPADDING', (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(section_line)
-        
-        story.append(Paragraph(summary_text, body_style))
-    
-    # ==================== WORK EXPERIENCE ====================
-    if data.get('experience'):
-        story.append(Paragraph('WORK EXPERIENCE', section_header))
-        
-        # Section underline
-        section_line = Table([['']], colWidths=[1.8*inch])
-        section_line.setStyle(TableStyle([
-            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
-            ('TOPPADDING', (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(section_line)
-        
+        # Add new experience entries
         for job in data['experience']:
-            story.append(Spacer(1, 0.1*inch))
+            # Company header
+            p = doc.paragraphs[exp_start_idx].insert_paragraph_before('')
+            p.add_run(f"{job.get('company', 'Company Name')}").bold = True
+            p.add_run(f" {job.get('location', '')}").italic = True
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             
-            # Job title - bold
-            title = job.get('title', 'Position').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            story.append(Paragraph(title, job_title_style))
+            # Position and dates
+            p = doc.paragraphs[exp_start_idx].insert_paragraph_before('')
+            run1 = p.add_run(f"{job.get('position', 'Position')}, {job.get('detail', '')}")
+            run1.italic = True
+            p.add_run(f" {job.get('start_date', 'Mnth Yr')} -- {job.get('end_date', 'Present')}")
             
-            # Company and dates - elegant
-            company_parts = []
-            if job.get('company'):
-                company_parts.append(job['company'])
-            if job.get('location'):
-                company_parts.append(job['location'])
-            if job.get('dates'):
-                company_parts.append(job['dates'])
-            
-            company_line = ' | '.join(company_parts)
-            company_line = company_line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            story.append(Paragraph(company_line, company_style))
-            
-            # Achievements with custom bullets
+            # Responsibilities as bullets
             if job.get('responsibilities'):
                 for resp in job['responsibilities']:
-                    resp_clean = resp.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    story.append(Paragraph(f'• {resp_clean}', bullet_style))
+                    p = doc.paragraphs[exp_start_idx].insert_paragraph_before(resp)
+                    p.style = 'List Bullet'
+            
+            # Spacing
+            doc.paragraphs[exp_start_idx].insert_paragraph_before('')
     
-    # ==================== EDUCATION ====================
-    if data.get('education'):
-        story.append(Paragraph('EDUCATION', section_header))
+    # Rebuild LEADERSHIP section
+    if leadership_start_idx is not None and data.get('leadership'):
+        # Find new leadership index after rebuilding experience
+        leadership_start_idx = None
+        for i, paragraph in enumerate(doc.paragraphs):
+            if paragraph.text.strip() == 'LEADERSHIP & PROFESSIONAL DEVELOPMENT':
+                leadership_start_idx = i
+                break
         
-        section_line = Table([['']], colWidths=[1.2*inch])
-        section_line.setStyle(TableStyle([
-            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
-            ('TOPPADDING', (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(section_line)
-        
-        for edu in data['education']:
-            story.append(Spacer(1, 0.1*inch))
+        if leadership_start_idx:
+            # Delete old content
+            skills_start_idx = None
+            for i, paragraph in enumerate(doc.paragraphs):
+                if paragraph.text.strip() == 'SKILLS & INTERESTS':
+                    skills_start_idx = i
+                    break
             
-            degree = edu.get('degree', 'Degree').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            story.append(Paragraph(degree, job_title_style))
+            if skills_start_idx:
+                for _ in range(skills_start_idx - leadership_start_idx - 1):
+                    doc.paragraphs[leadership_start_idx + 1]._element.getparent().remove(doc.paragraphs[leadership_start_idx + 1]._element)
             
-            edu_parts = []
-            if edu.get('institution'):
-                edu_parts.append(edu['institution'])
-            if edu.get('location'):
-                edu_parts.append(edu['location'])
-            if edu.get('year'):
-                edu_parts.append(edu['year'])
+            # Add new leadership entries
+            for activity in data['leadership']:
+                # Organization header
+                p = doc.paragraphs[leadership_start_idx].insert_paragraph_before('')
+                p.add_run(f"{activity.get('organization', 'Organization')}").bold = True
+                p.add_run(f" {activity.get('location', '')}").italic = True
+                
+                # Position and dates
+                p = doc.paragraphs[leadership_start_idx].insert_paragraph_before('')
+                run1 = p.add_run(f"{activity.get('position', 'Position')}, {activity.get('detail', '')}")
+                run1.italic = True
+                p.add_run(f" {activity.get('start_date', 'Mnth Yr')} -- {activity.get('end_date', 'Present')}")
+                
+                # Responsibilities as bullets
+                if activity.get('responsibilities'):
+                    for resp in activity['responsibilities']:
+                        p = doc.paragraphs[leadership_start_idx].insert_paragraph_before(resp)
+                        p.style = 'List Bullet'
+                
+                # Spacing
+                doc.paragraphs[leadership_start_idx].insert_paragraph_before('')
             
-            edu_line = ' | '.join(edu_parts)
-            edu_line = edu_line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            story.append(Paragraph(edu_line, company_style))
-            
-            if edu.get('details'):
-                details = edu['details'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                story.append(Paragraph(details, body_style))
+            # Add affiliations if present
+            if data.get('affiliations'):
+                p = doc.paragraphs[leadership_start_idx].insert_paragraph_before('')
+                p.add_run('Other Affiliations: ').bold = True
+                p.add_run(', '.join(sorted(data['affiliations'])))
     
-    # ==================== SKILLS ====================
-    if data.get('skills'):
-        story.append(Paragraph('SKILLS', section_header))
-        
-        section_line = Table([['']], colWidths=[0.9*inch])
-        section_line.setStyle(TableStyle([
-            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
-            ('TOPPADDING', (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(section_line)
-        
-        for skill_category in data['skills']:
-            category_name = skill_category.get('category', 'Technical Skills')
-            skills_list = ', '.join(skill_category.get('items', []))
-            
-            # Create colored category with skills
-            text = f'<b><font color="#2563eb">{category_name}:</font></b> {skills_list}'
-            text = text.replace('&', '&amp;')
-            story.append(Paragraph(text, skills_style))
+    # Update SKILLS section
+    for paragraph in doc.paragraphs:
+        if 'Language:' in paragraph.text and data.get('languages'):
+            paragraph.text = f"Language: {', '.join(data['languages'])}"
+        elif 'Computer:' in paragraph.text and data.get('computer_skills'):
+            paragraph.text = f"Computer: {', '.join(data['computer_skills'])}"
+        elif 'Interests:' in paragraph.text and data.get('interests'):
+            paragraph.text = f"Interests: {', '.join(sorted(data['interests']))}"
     
-    # ==================== CERTIFICATIONS ====================
-    if data.get('certifications'):
-        story.append(Paragraph('CERTIFICATIONS', section_header))
-        
-        section_line = Table([['']], colWidths=[1.5*inch])
-        section_line.setStyle(TableStyle([
-            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
-            ('TOPPADDING', (0, 0), (-1, -1), 0),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        story.append(section_line)
-        
-        for cert in data['certifications']:
-            cert_clean = cert.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            story.append(Paragraph(f'• {cert_clean}', bullet_style))
-    
-    doc.build(story)
+    # Save to buffer
+    buffer = io.BytesIO()
+    doc.save(buffer)
     buffer.seek(0)
     return buffer
 
@@ -440,23 +335,23 @@ def upload_and_extract():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/generate-pdf', methods=['POST'])
-def generate_pdf():
-    """Generate PDF from structured data"""
+@app.route('/generate-word', methods=['POST'])
+def generate_word():
+    """Generate Word document from structured data using template"""
     try:
         data = request.json
-        print("Generating PDF from data...")
+        print("Generating Word document from template...")
         
-        pdf_buffer = create_ats_resume_pdf(data)
+        word_buffer = fill_word_template(data)
         
         return send_file(
-            pdf_buffer,
-            mimetype='application/pdf',
+            word_buffer,
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             as_attachment=True,
-            download_name='ATS_Resume.pdf'
+            download_name='ATS_Resume.docx'
         )
     except Exception as e:
-        print(f"Error generating PDF: {str(e)}")
+        print(f"Error generating Word document: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

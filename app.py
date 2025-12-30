@@ -113,98 +113,126 @@ Return ONLY the JSON object, no other text."""
         raise
 
 def create_ats_resume_pdf(data):
-    """Create professional ATS-friendly resume from template"""
+    """Create beautiful, modern ATS-friendly resume from template"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=letter,
-        topMargin=0.5*inch,
-        bottomMargin=0.5*inch,
-        leftMargin=0.75*inch,
-        rightMargin=0.75*inch
+        topMargin=0.4*inch,
+        bottomMargin=0.4*inch,
+        leftMargin=0.6*inch,
+        rightMargin=0.6*inch
     )
     
-    # Colors
-    primary_color = HexColor('#1e40af')
-    text_color = HexColor('#1f2937')
-    light_gray = HexColor('#6b7280')
+    # Modern Color Scheme
+    primary_color = HexColor('#2563eb')      # Vibrant blue
+    accent_color = HexColor('#059669')       # Green accent
+    dark_text = HexColor('#111827')          # Almost black
+    medium_gray = HexColor('#6b7280')        # Medium gray
+    light_bg = HexColor('#f3f4f6')           # Light background
     
     # Styles
     styles = getSampleStyleSheet()
     
+    # Name - Large and bold
     name_style = ParagraphStyle(
         'Name',
         parent=styles['Heading1'],
-        fontSize=22,
+        fontSize=26,
         textColor=primary_color,
-        spaceAfter=6,
+        spaceAfter=4,
         alignment=TA_CENTER,
-        fontName='Helvetica-Bold'
+        fontName='Helvetica-Bold',
+        leading=30
     )
     
+    # Contact - Clean and centered
     contact_style = ParagraphStyle(
         'Contact',
         parent=styles['Normal'],
         fontSize=10,
-        textColor=text_color,
-        spaceAfter=12,
+        textColor=dark_text,
+        spaceAfter=16,
         alignment=TA_CENTER,
         fontName='Helvetica'
     )
     
+    # Section Headers - Bold with color
     section_header = ParagraphStyle(
         'SectionHeader',
         parent=styles['Heading2'],
-        fontSize=12,
+        fontSize=13,
         textColor=primary_color,
-        spaceBefore=12,
-        spaceAfter=6,
-        fontName='Helvetica-Bold'
+        spaceBefore=16,
+        spaceAfter=8,
+        fontName='Helvetica-Bold',
+        borderWidth=0,
+        borderPadding=0,
+        leftIndent=0,
+        leading=15
     )
     
+    # Job Title - Prominent
     job_title_style = ParagraphStyle(
         'JobTitle',
-        fontSize=11,
-        textColor=text_color,
-        spaceAfter=2,
-        fontName='Helvetica-Bold'
+        fontSize=12,
+        textColor=dark_text,
+        spaceAfter=3,
+        fontName='Helvetica-Bold',
+        leading=14
     )
     
+    # Company/Institution - Elegant
     company_style = ParagraphStyle(
         'Company',
         fontSize=10,
-        textColor=light_gray,
-        spaceAfter=6,
-        fontName='Helvetica'
+        textColor=medium_gray,
+        spaceAfter=7,
+        fontName='Helvetica-Oblique',
+        leading=12
     )
     
+    # Body text - Readable
     body_style = ParagraphStyle(
         'Body',
         fontSize=10,
-        textColor=text_color,
-        spaceAfter=6,
-        leading=14,
+        textColor=dark_text,
+        spaceAfter=8,
+        leading=15,
         fontName='Helvetica',
         alignment=TA_JUSTIFY
     )
     
+    # Bullet points - Clean
     bullet_style = ParagraphStyle(
         'Bullet',
         fontSize=10,
-        textColor=text_color,
-        spaceAfter=4,
-        leading=13,
+        textColor=dark_text,
+        spaceAfter=5,
+        leading=14,
         fontName='Helvetica',
-        leftIndent=18
+        leftIndent=20,
+        bulletIndent=8
+    )
+    
+    # Skills inline style
+    skills_style = ParagraphStyle(
+        'Skills',
+        fontSize=10,
+        textColor=dark_text,
+        spaceAfter=6,
+        leading=14,
+        fontName='Helvetica'
     )
     
     story = []
     
-    # Header - Name
+    # ==================== HEADER ====================
+    # Name - Big and bold
     name = data.get('name', 'Name Not Provided')
     story.append(Paragraph(name.upper(), name_style))
     
-    # Contact Info
+    # Contact Info - One clean line
     contact_parts = []
     if data.get('email'):
         contact_parts.append(data['email'])
@@ -213,63 +241,110 @@ def create_ats_resume_pdf(data):
     if data.get('location'):
         contact_parts.append(data['location'])
     if data.get('linkedin'):
-        contact_parts.append(data['linkedin'])
+        linkedin = data['linkedin'].replace('https://', '').replace('http://', '')
+        contact_parts.append(linkedin)
     
     if contact_parts:
-        contact_text = ' | '.join(contact_parts)
+        contact_text = ' • '.join(contact_parts)  # Using bullet separator
         story.append(Paragraph(contact_text, contact_style))
     
-    # Full-width line
-    page_width = letter[0] - 1.5*inch
-    line = Table([['']], colWidths=[page_width])
-    line.setStyle(TableStyle([
-        ('LINEBELOW', (0, 0), (-1, -1), 2, primary_color),
+    # Decorative line under header
+    page_width = letter[0] - 1.2*inch
+    header_line = Table([['']], colWidths=[page_width])
+    header_line.setStyle(TableStyle([
+        ('LINEBELOW', (0, 0), (-1, -1), 2.5, primary_color),
         ('TOPPADDING', (0, 0), (-1, -1), 0),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
-    story.append(line)
-    story.append(Spacer(1, 0.05*inch))
+    story.append(header_line)
     
-    # Professional Summary
+    # ==================== PROFESSIONAL SUMMARY ====================
     if data.get('summary'):
+        story.append(Spacer(1, 0.1*inch))
+        
+        # Section with colored background effect using table
+        summary_text = data['summary'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        
+        # Add section header
         story.append(Paragraph('PROFESSIONAL SUMMARY', section_header))
-        summary_clean = data['summary'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        story.append(Paragraph(summary_clean, body_style))
+        
+        # Add thin line under section
+        section_line = Table([['']], colWidths=[1.8*inch])
+        section_line.setStyle(TableStyle([
+            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(section_line)
+        
+        story.append(Paragraph(summary_text, body_style))
     
-    # Work Experience
+    # ==================== WORK EXPERIENCE ====================
     if data.get('experience'):
         story.append(Paragraph('WORK EXPERIENCE', section_header))
+        
+        # Section underline
+        section_line = Table([['']], colWidths=[1.8*inch])
+        section_line.setStyle(TableStyle([
+            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(section_line)
+        
         for job in data['experience']:
-            story.append(Spacer(1, 0.08*inch))
+            story.append(Spacer(1, 0.1*inch))
+            
+            # Job title - bold
             title = job.get('title', 'Position').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             story.append(Paragraph(title, job_title_style))
             
-            company_line = job.get('company', 'Company')
+            # Company and dates - elegant
+            company_parts = []
+            if job.get('company'):
+                company_parts.append(job['company'])
             if job.get('location'):
-                company_line += f", {job['location']}"
+                company_parts.append(job['location'])
             if job.get('dates'):
-                company_line += f" | {job['dates']}"
+                company_parts.append(job['dates'])
+            
+            company_line = ' | '.join(company_parts)
             company_line = company_line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             story.append(Paragraph(company_line, company_style))
             
+            # Achievements with custom bullets
             if job.get('responsibilities'):
                 for resp in job['responsibilities']:
                     resp_clean = resp.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    story.append(Paragraph(f"• {resp_clean}", bullet_style))
+                    story.append(Paragraph(f'• {resp_clean}', bullet_style))
     
-    # Education
+    # ==================== EDUCATION ====================
     if data.get('education'):
         story.append(Paragraph('EDUCATION', section_header))
+        
+        section_line = Table([['']], colWidths=[1.2*inch])
+        section_line.setStyle(TableStyle([
+            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(section_line)
+        
         for edu in data['education']:
-            story.append(Spacer(1, 0.08*inch))
+            story.append(Spacer(1, 0.1*inch))
+            
             degree = edu.get('degree', 'Degree').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             story.append(Paragraph(degree, job_title_style))
             
-            edu_line = edu.get('institution', 'Institution')
+            edu_parts = []
+            if edu.get('institution'):
+                edu_parts.append(edu['institution'])
             if edu.get('location'):
-                edu_line += f", {edu['location']}"
+                edu_parts.append(edu['location'])
             if edu.get('year'):
-                edu_line += f" | {edu['year']}"
+                edu_parts.append(edu['year'])
+            
+            edu_line = ' | '.join(edu_parts)
             edu_line = edu_line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
             story.append(Paragraph(edu_line, company_style))
             
@@ -277,24 +352,42 @@ def create_ats_resume_pdf(data):
                 details = edu['details'].replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                 story.append(Paragraph(details, body_style))
     
-    # Skills
+    # ==================== SKILLS ====================
     if data.get('skills'):
         story.append(Paragraph('SKILLS', section_header))
+        
+        section_line = Table([['']], colWidths=[0.9*inch])
+        section_line.setStyle(TableStyle([
+            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(section_line)
+        
         for skill_category in data['skills']:
             category_name = skill_category.get('category', 'Technical Skills')
             skills_list = ', '.join(skill_category.get('items', []))
-            text = f"<b>{category_name}:</b> {skills_list}"
-            text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            # Re-add bold tags after escaping
-            text = text.replace('&lt;b&gt;', '<b>').replace('&lt;/b&gt;', '</b>')
-            story.append(Paragraph(text, body_style))
+            
+            # Create colored category with skills
+            text = f'<b><font color="#2563eb">{category_name}:</font></b> {skills_list}'
+            text = text.replace('&', '&amp;')
+            story.append(Paragraph(text, skills_style))
     
-    # Certifications
+    # ==================== CERTIFICATIONS ====================
     if data.get('certifications'):
         story.append(Paragraph('CERTIFICATIONS', section_header))
+        
+        section_line = Table([['']], colWidths=[1.5*inch])
+        section_line.setStyle(TableStyle([
+            ('LINEBELOW', (0, 0), (-1, -1), 2, accent_color),
+            ('TOPPADDING', (0, 0), (-1, -1), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        story.append(section_line)
+        
         for cert in data['certifications']:
             cert_clean = cert.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            story.append(Paragraph(f"• {cert_clean}", bullet_style))
+            story.append(Paragraph(f'• {cert_clean}', bullet_style))
     
     doc.build(story)
     buffer.seek(0)

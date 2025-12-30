@@ -30,7 +30,7 @@ if not OPENAI_API_KEY:
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-ALLOWED_EXTENSIONS = {'pdf', 'docx', 'txt'}  # reliable formats
+ALLOWED_EXTENSIONS = {'pdf', 'docx', 'txt'}
 TEMPLATE_PATH = 'resume_template.docx'
 
 # ---------------------------
@@ -56,9 +56,6 @@ def extract_text_from_docx(file_path: str) -> str:
 # Helpers: AI extraction
 # ---------------------------
 def extract_resume_data_with_ai(resume_text: str) -> dict:
-    """
-    Use AI to extract structured data from the resume; return dict.
-    """
     prompt = f"""Extract structured information from this resume and return ONLY a JSON object with this exact format:
 {{
   "name": "Full Name",
@@ -117,18 +114,12 @@ Return ONLY the JSON object, no other text.
             max_tokens=2000
         )
         result = response.choices[0].message.content.strip()
-
-        # Strip markdown fences if present
         if result.startswith("```"):
             parts = result.split("```")
-            # pick the largest chunk (usually the JSON)
             result = max(parts, key=len)
         if result.lower().startswith("json"):
             result = result[4:].strip()
-
-        data = json.loads(result)
-        return data
-
+        return json.loads(result)
     except json.JSONDecodeError as je:
         raise ValueError(f"AI returned invalid JSON: {je}")
     except Exception as e:
@@ -142,16 +133,12 @@ Return ONLY the JSON object, no other text.
 BULLET_STYLE_CANDIDATES = ['List Bullet', 'List Paragraph', 'Normal']
 
 def set_bullet_style(p, doc):
-    """
-    Tries to apply a list/bullet style. Falls back gracefully if a style is missing.
-    """
     for style_name in BULLET_STYLE_CANDIDATES:
         try:
             p.style = doc.styles[style_name]
             return
         except KeyError:
             continue
-    # Visual fallback if no list style exists
     if p.text.strip() and not p.text.strip().startswith('•'):
         p.text = f'• {p.text}'
 
@@ -159,10 +146,7 @@ def non_empty_list(items):
     return [str(x).strip() for x in (items or []) if x and str(x).strip()]
 
 def replace_in_paragraph(paragraph, replacements: dict):
-    """
-    Replace placeholders in a paragraph. This approach re-sets runs to preserve correctness
-    when placeholders are split across runs (sacrifices mixed formatting within the line).
-    """
+    # Safe paragraph-level replacement (resets runs in the paragraph)
     text = paragraph.text
     replaced = False
     for key, value in replacements.items():
@@ -170,11 +154,9 @@ def replace_in_paragraph(paragraph, replacements: dict):
             text = text.replace(key, str(value))
             replaced = True
     if replaced:
-        # Remove existing runs
         while paragraph.runs:
             run = paragraph.runs[0]
             run._element.getparent().remove(run._element)
-        # Add single run with replaced text
         paragraph.add_run(text)
 
 def replace_text_in_doc(doc: Document, replacements: dict):
@@ -193,19 +175,11 @@ def find_header_index(doc: Document, header_text: str):
     return None
 
 def remove_between(doc: Document, start_header: str, end_header: str):
-    """
-    Remove all paragraphs strictly between start_header and end_header.
-    If end_header is None or not found, remove until the end of document.
-    """
     start_idx = find_header_index(doc, start_header)
     end_idx = find_header_index(doc, end_header) if end_header else None
-
     if start_idx is None:
         return
-
-    # Determine removal range
     if end_idx is None:
-        # remove everything after start header
         while len(doc.paragraphs) > start_idx + 1:
             target = doc.paragraphs[start_idx + 1]
             target._element.getparent().remove(target._element)
@@ -216,31 +190,60 @@ def remove_between(doc: Document, start_header: str, end_header: str):
             target._element.getparent().remove(target._element)
 
 def insert_before_index(doc: Document, idx: int, text: str = ""):
-    """
-    Insert a paragraph before the paragraph at 'idx'. If idx is None,
-    append at the end of the document.
-    """
     if idx is None or idx >= len(doc.paragraphs):
-        p = doc.add_paragraph(text)
-        return p
+        return doc.add_paragraph(text)
     anchor = doc.paragraphs[idx]
-    p = anchor.insert_paragraph_before(text)
-    return p
+    return anchor.insert_paragraph_before(text)
+
+def normalize_header(doc: Document, data: dict):
+    """
+    Fix the combined 'EDUCATIONYour Name' paragraph by splitting into:
+    - 'EDUCATION' (kept as a header paragraph)
+    - A new paragraph with the user's Name
+    """
+    for i, p in enumerate(doc.paragraphs):
+        if p.text.strip() == 'EDUCATIONYour Name':
+            # Put Name ABOVE the 'EDUCATION' header (as a top header line)
+            name_line = p.insert_paragraph_before(data.get('name', 'Your Name'))
+            # Keep 'EDUCATION' as its own header
+            p.text = 'EXPERIENCE' if False else 'EDUCATION'  # keep EDUCATION
+            return  # after first correction, stop
+    # If not found, do nothing
+
+def clear_placeholder_lines(doc: Document, data: dict):
+    """
+    If certain sections are missing, clear placeholder lines to avoid dummy text.
+    """
+    has_honors = bool(non_empty_list(data.get('honors')))
+    has_scholarships = bool(non_empty_list(data.get('scholarships')))
+    has_coursework = bool(non_empty_list(data.get('coursework')))
+    has_interests = bool(non_empty_list(data.get('interests')))
+
+    for p in doc.paragraphs:
+        t = p.text.strip()
+        if t.startswith('Honors/Awards:') and not has_honors:
+            p.text = 'Honors/Awards:'
+        elif t.startswith('Scholarships:') and not has_scholarships:
+            p.text = 'Scholarships:'
+        elif t.startswith('Relevant Coursework:') and not has_coursework:
+            p.text = 'Relevant Coursework:'
+        elif t.startswith('Interests:') and not has_interests:
+            p.text = 'Interests:'
 
 def fill_word_template(data: dict) -> io.BytesIO:
-    """
-    Fill the Word template with extracted data and rebuild sections.
-    """
     doc = Document(TEMPLATE_PATH)
 
-    # Log style inventory once for diagnostics
+    # Startup diagnostics
     try:
         para_styles = [s.name for s in doc.styles if getattr(s, 'type', None) == WD_STYLE_TYPE.PARAGRAPH]
         print("Template paragraph styles:", para_styles)
     except Exception:
         pass
 
-    # Replacements for header fields/placeholders present in your template
+    # Normalize the header that combines EDUCATION + Name
+    normalize_header(doc, data)
+
+    # Basic replacements (address, email, phone, etc.)
     replacements = {
         'Your Name': data.get('name', 'Your Name'),
         '555 Your Address, NY 10005': data.get('address', ''),
@@ -255,10 +258,9 @@ def fill_word_template(data: dict) -> io.BytesIO:
         'Your Minor: DEF': f"Your Minor: {data.get('minor', 'DEF')}" if data.get('minor') else 'Your Minor: ',
     }
 
-    # Replace simple placeholders
     replace_text_in_doc(doc, replacements)
 
-    # Update line-level composite sections
+    # Update merged lines for honors/scholarships/coursework
     for paragraph in doc.paragraphs:
         t = paragraph.text
         if 'Honors/Awards:' in t and data.get('honors'):
@@ -271,7 +273,10 @@ def fill_word_template(data: dict) -> io.BytesIO:
             coursework_text = ', '.join(sorted(non_empty_list(data.get('coursework'))))
             paragraph.text = f"Relevant Coursework: {coursework_text}"
 
-    # Compute key header indices
+    # Clear placeholders if sections are missing
+    clear_placeholder_lines(doc, data)
+
+    # Section headers
     exp_header = 'EXPERIENCE'
     lead_header = 'LEADERSHIP & PROFESSIONAL DEVELOPMENT'
     skills_header = 'SKILLS & INTERESTS'
@@ -284,14 +289,12 @@ def fill_word_template(data: dict) -> io.BytesIO:
     # Rebuild EXPERIENCE section
     # ---------------------------
     if exp_idx is not None and data.get('experience'):
-        # Remove everything between EXPERIENCE and the next header (LEADERSHIP or SKILLS)
         end_header = lead_header if lead_idx is not None else skills_header if skills_idx is not None else None
         remove_between(doc, exp_header, end_header)
-
-        # Choose insertion anchor: right before the next header (or append if none)
         insert_anchor_idx = find_header_index(doc, end_header) if end_header else None
 
-        for job in data.get('experience', []):
+        # Iterate REVERSED so final order is correct (first item ends up closest to header)
+        for job in reversed(data.get('experience', [])):
             company = job.get('company', 'Company Name')
             location = job.get('location', '')
             position = job.get('position', 'Position')
@@ -299,7 +302,6 @@ def fill_word_template(data: dict) -> io.BytesIO:
             start_date = job.get('start_date', 'Mnth Yr')
             end_date = job.get('end_date', 'Present')
 
-            # Company header line
             p = insert_before_index(doc, insert_anchor_idx, "")
             p.add_run(f"{company}").bold = True
             if location:
@@ -307,35 +309,28 @@ def fill_word_template(data: dict) -> io.BytesIO:
                 r.italic = True
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
-            # Position + dates line
             p = insert_before_index(doc, insert_anchor_idx, "")
             run1 = p.add_run(f"{position}, {detail}" if detail else f"{position}")
             run1.italic = True
             p.add_run(f" {start_date} -- {end_date}")
 
-            # Responsibilities bullets
             for resp in non_empty_list(job.get('responsibilities')):
                 bp = insert_before_index(doc, insert_anchor_idx, resp)
                 set_bullet_style(bp, doc)
 
-            # Spacer (single blank line)
             insert_before_index(doc, insert_anchor_idx, "")
 
     # ---------------------------
     # Rebuild LEADERSHIP section
     # ---------------------------
-    # Recompute indices in case EXPERIENCE changes shifted them
     lead_idx = find_header_index(doc, lead_header)
     skills_idx = find_header_index(doc, skills_header)
 
     if lead_idx is not None and data.get('leadership'):
-        # Remove content between LEADERSHIP and SKILLS
         remove_between(doc, lead_header, skills_header if skills_idx is not None else None)
-
-        # Insert before SKILLS or append
         insert_anchor_idx = find_header_index(doc, skills_header) if skills_idx is not None else None
 
-        for activity in data.get('leadership', []):
+        for activity in reversed(data.get('leadership', [])):
             org = activity.get('organization', 'Organization')
             location = activity.get('location', '')
             position = activity.get('position', 'Position')
@@ -343,28 +338,23 @@ def fill_word_template(data: dict) -> io.BytesIO:
             start_date = activity.get('start_date', 'Mnth Yr')
             end_date = activity.get('end_date', 'Present')
 
-            # Organization header line
             p = insert_before_index(doc, insert_anchor_idx, "")
             p.add_run(f"{org}").bold = True
             if location:
                 r = p.add_run(f" {location}")
                 r.italic = True
 
-            # Position + dates line
             p = insert_before_index(doc, insert_anchor_idx, "")
             run1 = p.add_run(f"{position}, {detail}" if detail else f"{position}")
             run1.italic = True
             p.add_run(f" {start_date} -- {end_date}")
 
-            # Responsibilities bullets
             for resp in non_empty_list(activity.get('responsibilities')):
                 bp = insert_before_index(doc, insert_anchor_idx, resp)
                 set_bullet_style(bp, doc)
 
-            # Spacer
             insert_before_index(doc, insert_anchor_idx, "")
 
-        # Add affiliations under leadership if present
         affs = non_empty_list(data.get('affiliations'))
         if affs:
             p = insert_before_index(doc, insert_anchor_idx, "")
@@ -387,7 +377,6 @@ def fill_word_template(data: dict) -> io.BytesIO:
         elif 'Interests:' in t and interests:
             paragraph.text = f"Interests: {', '.join(sorted(interests))}"
 
-    # Save to buffer
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
@@ -414,13 +403,9 @@ def index():
 
 @app.route('/upload-and-extract', methods=['POST'])
 def upload_and_extract():
-    """
-    Upload resume and extract structured data with AI.
-    """
     try:
         resume_text = ""
 
-        # Handle file upload
         if 'file' in request.files:
             file = request.files['file']
             if file and file.filename and allowed_file(file.filename):
@@ -434,13 +419,11 @@ def upload_and_extract():
                 elif filename.lower().endswith('.docx'):
                     resume_text = extract_text_from_docx(filepath)
 
-                # Clean up temp file
                 try:
                     os.remove(filepath)
                 except Exception:
                     pass
 
-        # Handle text input
         if not resume_text and request.form.get('text_input'):
             resume_text = request.form.get('text_input')
 
@@ -449,10 +432,7 @@ def upload_and_extract():
 
         print("Extracting data with AI...")
         structured_data = extract_resume_data_with_ai(resume_text)
-
-        # Avoid logging PII-heavy content; log keys only
         print("Extraction successful. Keys:", list(structured_data.keys()))
-
         return jsonify(structured_data)
 
     except ValueError as ve:
@@ -464,9 +444,6 @@ def upload_and_extract():
 
 @app.route('/generate-word', methods=['POST'])
 def generate_word():
-    """
-    Generate Word document from structured data using template.
-    """
     try:
         data = request.get_json(force=True)
         validate_structured_data(data)
@@ -489,7 +466,6 @@ def generate_word():
 # Entrypoint
 # ---------------------------
 if __name__ == '__main__':
-    # Startup diagnostics: show styles present in template
     try:
         if os.path.exists(TEMPLATE_PATH):
             d = Document(TEMPLATE_PATH)

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ATS Resume Generator - Hybrid AI</title>
+    <title>ATS Resume Generator - Word Template</title>
     <style>
         * {
             margin: 0;
@@ -206,19 +206,6 @@
             border: 1px solid #e2e8f0;
         }
 
-        .btn-add {
-            background: #48bb78;
-            padding: 8px 20px;
-            font-size: 0.9em;
-        }
-
-        .btn-remove {
-            background: #f56565;
-            padding: 6px 15px;
-            font-size: 0.85em;
-            float: right;
-        }
-
         .hidden {
             display: none;
         }
@@ -245,8 +232,8 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>🚀 ATS Resume Generator</h1>
-            <p>AI-Powered | Template-Based | Professional</p>
+            <h1>📄 ATS Resume Generator</h1>
+            <p>AI-Powered | Word Template | Professional</p>
             <div>
                 <span class="badge">⚡ Fast (5-8 sec)</span>
                 <span class="badge">💰 Low Cost</span>
@@ -261,7 +248,7 @@
                 
                 <div class="alert alert-info">
                     <strong>🤖 AI Magic:</strong> Upload a messy resume (PDF/Word) or paste text. 
-                    AI will extract and structure all information automatically!
+                    AI will extract and structure all information automatically to fill a professional template!
                 </div>
 
                 <div class="upload-area" id="dropZone">
@@ -299,6 +286,10 @@
                         <label>Full Name</label>
                         <input type="text" id="name" required>
                     </div>
+                    <div class="form-group">
+                        <label>Address</label>
+                        <input type="text" id="address" placeholder="Street, City, State ZIP">
+                    </div>
                     <div class="grid-2">
                         <div class="form-group">
                             <label>Email</label>
@@ -309,35 +300,84 @@
                             <input type="tel" id="phone">
                         </div>
                     </div>
+
+                    <div class="section-title">🎓 Education</div>
+                    <div class="form-group">
+                        <label>University</label>
+                        <input type="text" id="university">
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>College/School</label>
+                            <input type="text" id="college">
+                        </div>
+                        <div class="form-group">
+                            <label>GPA</label>
+                            <input type="text" id="gpa" placeholder="3.85">
+                        </div>
+                    </div>
                     <div class="grid-2">
                         <div class="form-group">
                             <label>Location</label>
-                            <input type="text" id="location">
+                            <input type="text" id="location" placeholder="City, State">
                         </div>
                         <div class="form-group">
-                            <label>LinkedIn/GitHub</label>
-                            <input type="text" id="linkedin">
+                            <label>Graduation Date</label>
+                            <input type="text" id="graduation_date" placeholder="May 2025">
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Major</label>
+                            <input type="text" id="major">
+                        </div>
+                        <div class="form-group">
+                            <label>Minor (optional)</label>
+                            <input type="text" id="minor">
                         </div>
                     </div>
 
-                    <div class="section-title">💼 Professional Summary</div>
-                    <textarea id="summary" rows="3"></textarea>
+                    <div class="form-group">
+                        <label>Honors/Awards (comma separated)</label>
+                        <input type="text" id="honors" placeholder="Dean's List, Honor Society, etc.">
+                    </div>
+                    <div class="form-group">
+                        <label>Scholarships (comma separated)</label>
+                        <input type="text" id="scholarships">
+                    </div>
+                    <div class="form-group">
+                        <label>Relevant Coursework (comma separated)</label>
+                        <input type="text" id="coursework">
+                    </div>
 
                     <div class="section-title">🏢 Work Experience</div>
                     <div id="experienceContainer"></div>
 
-                    <div class="section-title">🎓 Education</div>
-                    <div id="educationContainer"></div>
+                    <div class="section-title">💼 Leadership & Activities</div>
+                    <div id="leadershipContainer"></div>
 
-                    <div class="section-title">⚡ Skills</div>
-                    <div id="skillsContainer"></div>
+                    <div class="form-group">
+                        <label>Other Affiliations (comma separated)</label>
+                        <input type="text" id="affiliations" placeholder="Club memberships, organizations, etc.">
+                    </div>
 
-                    <div class="section-title">🏆 Certifications</div>
-                    <div id="certificationsContainer"></div>
+                    <div class="section-title">⚡ Skills & Interests</div>
+                    <div class="form-group">
+                        <label>Languages (comma separated)</label>
+                        <input type="text" id="languages" placeholder="Fluent in English, Intermediate Spanish">
+                    </div>
+                    <div class="form-group">
+                        <label>Computer Skills (comma separated)</label>
+                        <input type="text" id="computer_skills" placeholder="Python, Excel, PowerPoint, etc.">
+                    </div>
+                    <div class="form-group">
+                        <label>Interests (comma separated, optional)</label>
+                        <input type="text" id="interests">
+                    </div>
 
                     <div style="text-align: center; margin-top: 30px;">
                         <button type="button" class="btn" onclick="showStep1()" style="background: #718096;">← Back</button>
-                        <button type="submit" class="btn">📥 Generate PDF Resume</button>
+                        <button type="submit" class="btn">📥 Generate Word Resume</button>
                     </div>
                 </form>
             </div>
@@ -426,11 +466,24 @@
 
         function populateForm(data) {
             document.getElementById('name').value = data.name || '';
+            document.getElementById('address').value = data.address || '';
             document.getElementById('email').value = data.email || '';
             document.getElementById('phone').value = data.phone || '';
+            document.getElementById('university').value = data.university || '';
+            document.getElementById('college').value = data.college || '';
+            document.getElementById('gpa').value = data.gpa || '';
             document.getElementById('location').value = data.location || '';
-            document.getElementById('linkedin').value = data.linkedin || '';
-            document.getElementById('summary').value = data.summary || '';
+            document.getElementById('major').value = data.major || '';
+            document.getElementById('graduation_date').value = data.graduation_date || '';
+            document.getElementById('minor').value = data.minor || '';
+            
+            document.getElementById('honors').value = (data.honors || []).join(', ');
+            document.getElementById('scholarships').value = (data.scholarships || []).join(', ');
+            document.getElementById('coursework').value = (data.coursework || []).join(', ');
+            document.getElementById('affiliations').value = (data.affiliations || []).join(', ');
+            document.getElementById('languages').value = (data.languages || []).join(', ');
+            document.getElementById('computer_skills').value = (data.computer_skills || []).join(', ');
+            document.getElementById('interests').value = (data.interests || []).join(', ');
 
             // Experience
             const expContainer = document.getElementById('experienceContainer');
@@ -440,66 +493,45 @@
                     const div = document.createElement('div');
                     div.className = 'multi-item';
                     div.innerHTML = `
-                        <strong>Job ${i + 1}</strong>
+                        <strong>Experience ${i + 1}</strong>
                         <div style="margin-top: 10px;">
-                            <input type="text" value="${job.title || ''}" data-exp-index="${i}" data-field="title" style="margin-bottom: 5px;" placeholder="Job Title">
-                            <input type="text" value="${job.company || ''}" data-exp-index="${i}" data-field="company" style="margin-bottom: 5px;" placeholder="Company">
-                            <input type="text" value="${job.location || ''}" data-exp-index="${i}" data-field="location" style="margin-bottom: 5px;" placeholder="Location">
-                            <input type="text" value="${job.dates || ''}" data-exp-index="${i}" data-field="dates" style="margin-bottom: 5px;" placeholder="Dates">
-                            <textarea data-exp-index="${i}" data-field="responsibilities" rows="3" placeholder="Achievements (one per line)">${(job.responsibilities || []).join('\n')}</textarea>
+                            <input type="text" value="${job.company || ''}" data-exp-index="${i}" data-field="company" style="margin-bottom: 5px;" placeholder="Company Name">
+                            <input type="text" value="${job.location || ''}" data-exp-index="${i}" data-field="location" style="margin-bottom: 5px;" placeholder="City, State">
+                            <input type="text" value="${job.position || ''}" data-exp-index="${i}" data-field="position" style="margin-bottom: 5px;" placeholder="Position Title">
+                            <input type="text" value="${job.detail || ''}" data-exp-index="${i}" data-field="detail" style="margin-bottom: 5px;" placeholder="Additional Detail">
+                            <div class="grid-2" style="margin-bottom: 5px;">
+                                <input type="text" value="${job.start_date || ''}" data-exp-index="${i}" data-field="start_date" placeholder="Start Date">
+                                <input type="text" value="${job.end_date || ''}" data-exp-index="${i}" data-field="end_date" placeholder="End Date">
+                            </div>
+                            <textarea data-exp-index="${i}" data-field="responsibilities" rows="3" placeholder="Responsibilities (one per line)">${(job.responsibilities || []).join('\n')}</textarea>
                         </div>
                     `;
                     expContainer.appendChild(div);
                 });
             }
 
-            // Education
-            const eduContainer = document.getElementById('educationContainer');
-            eduContainer.innerHTML = '';
-            if (data.education) {
-                data.education.forEach((edu, i) => {
+            // Leadership
+            const leadContainer = document.getElementById('leadershipContainer');
+            leadContainer.innerHTML = '';
+            if (data.leadership) {
+                data.leadership.forEach((activity, i) => {
                     const div = document.createElement('div');
                     div.className = 'multi-item';
                     div.innerHTML = `
-                        <strong>Education ${i + 1}</strong>
+                        <strong>Leadership ${i + 1}</strong>
                         <div style="margin-top: 10px;">
-                            <input type="text" value="${edu.degree || ''}" data-edu-index="${i}" data-field="degree" style="margin-bottom: 5px;" placeholder="Degree">
-                            <input type="text" value="${edu.institution || ''}" data-edu-index="${i}" data-field="institution" style="margin-bottom: 5px;" placeholder="Institution">
-                            <input type="text" value="${edu.location || ''}" data-edu-index="${i}" data-field="location" style="margin-bottom: 5px;" placeholder="Location">
-                            <input type="text" value="${edu.year || ''}" data-edu-index="${i}" data-field="year" style="margin-bottom: 5px;" placeholder="Year">
-                            <input type="text" value="${edu.details || ''}" data-edu-index="${i}" data-field="details" placeholder="Details (GPA, etc.)">
+                            <input type="text" value="${activity.organization || ''}" data-lead-index="${i}" data-field="organization" style="margin-bottom: 5px;" placeholder="Organization Name">
+                            <input type="text" value="${activity.location || ''}" data-lead-index="${i}" data-field="location" style="margin-bottom: 5px;" placeholder="City, State">
+                            <input type="text" value="${activity.position || ''}" data-lead-index="${i}" data-field="position" style="margin-bottom: 5px;" placeholder="Position/Role">
+                            <input type="text" value="${activity.detail || ''}" data-lead-index="${i}" data-field="detail" style="margin-bottom: 5px;" placeholder="Additional Detail">
+                            <div class="grid-2" style="margin-bottom: 5px;">
+                                <input type="text" value="${activity.start_date || ''}" data-lead-index="${i}" data-field="start_date" placeholder="Start Date">
+                                <input type="text" value="${activity.end_date || ''}" data-lead-index="${i}" data-field="end_date" placeholder="End Date">
+                            </div>
+                            <textarea data-lead-index="${i}" data-field="responsibilities" rows="3" placeholder="Responsibilities (one per line)">${(activity.responsibilities || []).join('\n')}</textarea>
                         </div>
                     `;
-                    eduContainer.appendChild(div);
-                });
-            }
-
-            // Skills
-            const skillsContainer = document.getElementById('skillsContainer');
-            skillsContainer.innerHTML = '';
-            if (data.skills) {
-                data.skills.forEach((skill, i) => {
-                    const div = document.createElement('div');
-                    div.className = 'multi-item';
-                    div.innerHTML = `
-                        <input type="text" value="${skill.category || ''}" data-skill-index="${i}" data-field="category" style="margin-bottom: 5px;" placeholder="Category">
-                        <input type="text" value="${(skill.items || []).join(', ')}" data-skill-index="${i}" data-field="items" placeholder="Skills (comma separated)">
-                    `;
-                    skillsContainer.appendChild(div);
-                });
-            }
-
-            // Certifications
-            const certsContainer = document.getElementById('certificationsContainer');
-            certsContainer.innerHTML = '';
-            if (data.certifications) {
-                data.certifications.forEach((cert, i) => {
-                    const div = document.createElement('div');
-                    div.className = 'multi-item';
-                    div.innerHTML = `
-                        <input type="text" value="${cert}" data-cert-index="${i}" placeholder="Certification">
-                    `;
-                    certsContainer.appendChild(div);
+                    leadContainer.appendChild(div);
                 });
             }
         }
@@ -515,15 +547,25 @@
             // Collect updated data
             const finalData = {
                 name: document.getElementById('name').value,
+                address: document.getElementById('address').value,
                 email: document.getElementById('email').value,
                 phone: document.getElementById('phone').value,
+                university: document.getElementById('university').value,
+                college: document.getElementById('college').value,
+                gpa: document.getElementById('gpa').value,
                 location: document.getElementById('location').value,
-                linkedin: document.getElementById('linkedin').value,
-                summary: document.getElementById('summary').value,
+                major: document.getElementById('major').value,
+                graduation_date: document.getElementById('graduation_date').value,
+                minor: document.getElementById('minor').value,
+                honors: document.getElementById('honors').value.split(',').map(s => s.trim()).filter(s => s),
+                scholarships: document.getElementById('scholarships').value.split(',').map(s => s.trim()).filter(s => s),
+                coursework: document.getElementById('coursework').value.split(',').map(s => s.trim()).filter(s => s),
+                affiliations: document.getElementById('affiliations').value.split(',').map(s => s.trim()).filter(s => s),
+                languages: document.getElementById('languages').value.split(',').map(s => s.trim()).filter(s => s),
+                computer_skills: document.getElementById('computer_skills').value.split(',').map(s => s.trim()).filter(s => s),
+                interests: document.getElementById('interests').value.split(',').map(s => s.trim()).filter(s => s),
                 experience: [],
-                education: [],
-                skills: [],
-                certifications: []
+                leadership: []
             };
 
             // Collect experience
@@ -542,38 +584,20 @@
                 }
             });
 
-            // Collect education
-            document.querySelectorAll('[data-edu-index]').forEach(el => {
-                const index = parseInt(el.dataset.eduIndex);
+            // Collect leadership
+            document.querySelectorAll('[data-lead-index]').forEach(el => {
+                const index = parseInt(el.dataset.leadIndex);
                 const field = el.dataset.field;
                 
-                if (!finalData.education[index]) {
-                    finalData.education[index] = {};
+                if (!finalData.leadership[index]) {
+                    finalData.leadership[index] = {};
                 }
                 
-                finalData.education[index][field] = el.value;
-            });
-
-            // Collect skills
-            document.querySelectorAll('[data-skill-index]').forEach(el => {
-                const index = parseInt(el.dataset.skillIndex);
-                const field = el.dataset.field;
-                
-                if (!finalData.skills[index]) {
-                    finalData.skills[index] = {};
-                }
-                
-                if (field === 'items') {
-                    finalData.skills[index][field] = el.value.split(',').map(s => s.trim()).filter(s => s);
+                if (field === 'responsibilities') {
+                    finalData.leadership[index][field] = el.value.split('\n').filter(r => r.trim());
                 } else {
-                    finalData.skills[index][field] = el.value;
+                    finalData.leadership[index][field] = el.value;
                 }
-            });
-
-            // Collect certifications
-            document.querySelectorAll('[data-cert-index]').forEach(el => {
-                const index = parseInt(el.dataset.certIndex);
-                finalData.certifications[index] = el.value;
             });
 
             // Show loading
@@ -581,7 +605,7 @@
             document.getElementById('finalLoading').classList.remove('hidden');
 
             try {
-                const response = await fetch('/generate-pdf', {
+                const response = await fetch('/generate-word', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
@@ -594,7 +618,7 @@
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = 'ATS_Resume.pdf';
+                    a.download = 'ATS_Resume.docx';
                     document.body.appendChild(a);
                     a.click();
                     window.URL.revokeObjectURL(url);
@@ -609,7 +633,7 @@
                     document.getElementById('resumeText').value = '';
                     document.getElementById('fileName').textContent = '';
                 } else {
-                    throw new Error('Failed to generate PDF');
+                    throw new Error('Failed to generate Word document');
                 }
             } catch (error) {
                 alert('Error: ' + error.message);

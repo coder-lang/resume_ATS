@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATS Resume Generator - Hybrid AI</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 5px 15px;
+            border-radius: 20px;
+            margin: 5px;
+            font-size: 0.9em;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .step {
+            display: none;
+        }
+
+        .step.active {
+            display: block;
+        }
+
+        .upload-area {
+            border: 3px dashed #cbd5e0;
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: all 0.3s;
+        }
+
+        .upload-area:hover {
+            border-color: #667eea;
+            background: #f7fafc;
+        }
+
+        .upload-area.dragover {
+            border-color: #667eea;
+            background: #edf2f7;
+        }
+
+        textarea {
+            width: 100%;
+            min-height: 200px;
+            padding: 15px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            resize: vertical;
+            margin-bottom: 15px;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="tel"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e2e8f0;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        input:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .file-label {
+            display: inline-block;
+            padding: 12px 30px;
+            background: white;
+            border: 2px solid #667eea;
+            color: #667eea;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+
+        .file-label:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:disabled {
+            background: #cbd5e0;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 30px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f4f6;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .section-title {
+            font-size: 1.3em;
+            color: #667eea;
+            margin: 20px 0 15px 0;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #667eea;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 5px;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .multi-item {
+            background: #f7fafc;
+            padding: 15px;
+            margin-bottom: 15px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .btn-add {
+            background: #48bb78;
+            padding: 8px 20px;
+            font-size: 0.9em;
+        }
+
+        .btn-remove {
+            background: #f56565;
+            padding: 6px 15px;
+            font-size: 0.85em;
+            float: right;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .alert-info {
+            background: #e6f7ff;
+            border: 1px solid #91d5ff;
+            color: #0050b3;
+        }
+
+        @media (max-width: 768px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 ATS Resume Generator</h1>
+            <p>AI-Powered | Template-Based | Professional</p>
+            <div>
+                <span class="badge">⚡ Fast (5-8 sec)</span>
+                <span class="badge">💰 Low Cost</span>
+                <span class="badge">✅ ATS Perfect</span>
+            </div>
+        </div>
+
+        <div class="content">
+            <!-- Step 1: Upload -->
+            <div id="step1" class="step active">
+                <h2 style="margin-bottom: 20px;">Step 1: Upload Resume</h2>
+                
+                <div class="alert alert-info">
+                    <strong>🤖 AI Magic:</strong> Upload a messy resume (PDF/Word) or paste text. 
+                    AI will extract and structure all information automatically!
+                </div>
+
+                <div class="upload-area" id="dropZone">
+                    <p style="font-size: 3em; margin-bottom: 10px;">📄</p>
+                    <label for="fileInput" class="file-label">Choose File</label>
+                    <input type="file" id="fileInput" accept=".pdf,.doc,.docx,.txt">
+                    <p style="margin-top: 15px; color: #718096;">or drag and drop here</p>
+                    <div id="fileName" style="margin-top: 10px; color: #4a5568;"></div>
+                </div>
+
+                <p style="text-align: center; margin: 20px 0; color: #718096; font-weight: 600;">OR</p>
+
+                <textarea id="resumeText" placeholder="Paste resume text here..."></textarea>
+
+                <div style="text-align: center;">
+                    <button class="btn" onclick="extractData()">🤖 Extract Data with AI</button>
+                </div>
+            </div>
+
+            <!-- Loading -->
+            <div id="loading" class="loading hidden">
+                <div class="spinner"></div>
+                <p style="color: #667eea; font-size: 1.1em;">AI is extracting and structuring your resume data...</p>
+                <p style="color: #718096; margin-top: 10px;">This takes 5-8 seconds</p>
+            </div>
+
+            <!-- Step 2: Review & Edit -->
+            <div id="step2" class="step">
+                <h2 style="margin-bottom: 10px;">Step 2: Review & Edit Data</h2>
+                <p style="color: #718096; margin-bottom: 20px;">AI has extracted the data. Review and make any edits needed.</p>
+
+                <form id="reviewForm">
+                    <div class="section-title">📋 Personal Information</div>
+                    <div class="form-group">
+                        <label>Full Name</label>
+                        <input type="text" id="name" required>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Email</label>
+                            <input type="email" id="email">
+                        </div>
+                        <div class="form-group">
+                            <label>Phone</label>
+                            <input type="tel" id="phone">
+                        </div>
+                    </div>
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Location</label>
+                            <input type="text" id="location">
+                        </div>
+                        <div class="form-group">
+                            <label>LinkedIn/GitHub</label>
+                            <input type="text" id="linkedin">
+                        </div>
+                    </div>
+
+                    <div class="section-title">💼 Professional Summary</div>
+                    <textarea id="summary" rows="3"></textarea>
+
+                    <div class="section-title">🏢 Work Experience</div>
+                    <div id="experienceContainer"></div>
+
+                    <div class="section-title">🎓 Education</div>
+                    <div id="educationContainer"></div>
+
+                    <div class="section-title">⚡ Skills</div>
+                    <div id="skillsContainer"></div>
+
+                    <div class="section-title">🏆 Certifications</div>
+                    <div id="certificationsContainer"></div>
+
+                    <div style="text-align: center; margin-top: 30px;">
+                        <button type="button" class="btn" onclick="showStep1()" style="background: #718096;">← Back</button>
+                        <button type="submit" class="btn">📥 Generate PDF Resume</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Final Loading -->
+            <div id="finalLoading" class="loading hidden">
+                <div class="spinner"></div>
+                <p style="color: #667eea; font-size: 1.1em;">Generating your professional ATS resume...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let extractedData = null;
+
+        // Drag and drop
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                document.getElementById('fileName').textContent = `Selected: ${files[0].name}`;
+            }
+        });
+
+        fileInput.addEventListener('change', () => {
+            if (fileInput.files.length > 0) {
+                document.getElementById('fileName').textContent = `Selected: ${fileInput.files[0].name}`;
+            }
+        });
+
+        async function extractData() {
+            const file = fileInput.files[0];
+            const text = document.getElementById('resumeText').value.trim();
+
+            if (!file && !text) {
+                alert('Please upload a file or paste resume text');
+                return;
+            }
+
+            document.getElementById('step1').classList.remove('active');
+            document.getElementById('loading').classList.remove('hidden');
+
+            const formData = new FormData();
+            if (file) {
+                formData.append('file', file);
+            } else {
+                formData.append('text_input', text);
+            }
+
+            try {
+                const response = await fetch('/upload-and-extract', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    extractedData = data;
+                    populateForm(data);
+                    document.getElementById('loading').classList.add('hidden');
+                    document.getElementById('step2').classList.add('active');
+                } else {
+                    throw new Error(data.error || 'Failed to extract data');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('step1').classList.add('active');
+            }
+        }
+
+        function populateForm(data) {
+            document.getElementById('name').value = data.name || '';
+            document.getElementById('email').value = data.email || '';
+            document.getElementById('phone').value = data.phone || '';
+            document.getElementById('location').value = data.location || '';
+            document.getElementById('linkedin').value = data.linkedin || '';
+            document.getElementById('summary').value = data.summary || '';
+
+            // Experience
+            const expContainer = document.getElementById('experienceContainer');
+            expContainer.innerHTML = '';
+            if (data.experience) {
+                data.experience.forEach((job, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'multi-item';
+                    div.innerHTML = `
+                        <strong>Job ${i + 1}</strong>
+                        <div style="margin-top: 10px;">
+                            <input type="text" value="${job.title || ''}" data-exp-index="${i}" data-field="title" style="margin-bottom: 5px;" placeholder="Job Title">
+                            <input type="text" value="${job.company || ''}" data-exp-index="${i}" data-field="company" style="margin-bottom: 5px;" placeholder="Company">
+                            <input type="text" value="${job.location || ''}" data-exp-index="${i}" data-field="location" style="margin-bottom: 5px;" placeholder="Location">
+                            <input type="text" value="${job.dates || ''}" data-exp-index="${i}" data-field="dates" style="margin-bottom: 5px;" placeholder="Dates">
+                            <textarea data-exp-index="${i}" data-field="responsibilities" rows="3" placeholder="Achievements (one per line)">${(job.responsibilities || []).join('\n')}</textarea>
+                        </div>
+                    `;
+                    expContainer.appendChild(div);
+                });
+            }
+
+            // Education
+            const eduContainer = document.getElementById('educationContainer');
+            eduContainer.innerHTML = '';
+            if (data.education) {
+                data.education.forEach((edu, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'multi-item';
+                    div.innerHTML = `
+                        <strong>Education ${i + 1}</strong>
+                        <div style="margin-top: 10px;">
+                            <input type="text" value="${edu.degree || ''}" data-edu-index="${i}" data-field="degree" style="margin-bottom: 5px;" placeholder="Degree">
+                            <input type="text" value="${edu.institution || ''}" data-edu-index="${i}" data-field="institution" style="margin-bottom: 5px;" placeholder="Institution">
+                            <input type="text" value="${edu.location || ''}" data-edu-index="${i}" data-field="location" style="margin-bottom: 5px;" placeholder="Location">
+                            <input type="text" value="${edu.year || ''}" data-edu-index="${i}" data-field="year" style="margin-bottom: 5px;" placeholder="Year">
+                            <input type="text" value="${edu.details || ''}" data-edu-index="${i}" data-field="details" placeholder="Details (GPA, etc.)">
+                        </div>
+                    `;
+                    eduContainer.appendChild(div);
+                });
+            }
+
+            // Skills
+            const skillsContainer = document.getElementById('skillsContainer');
+            skillsContainer.innerHTML = '';
+            if (data.skills) {
+                data.skills.forEach((skill, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'multi-item';
+                    div.innerHTML = `
+                        <input type="text" value="${skill.category || ''}" data-skill-index="${i}" data-field="category" style="margin-bottom: 5px;" placeholder="Category">
+                        <input type="text" value="${(skill.items || []).join(', ')}" data-skill-index="${i}" data-field="items" placeholder="Skills (comma separated)">
+                    `;
+                    skillsContainer.appendChild(div);
+                });
+            }
+
+            // Certifications
+            const certsContainer = document.getElementById('certificationsContainer');
+            certsContainer.innerHTML = '';
+            if (data.certifications) {
+                data.certifications.forEach((cert, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'multi-item';
+                    div.innerHTML = `
+                        <input type="text" value="${cert}" data-cert-index="${i}" placeholder="Certification">
+                    `;
+                    certsContainer.appendChild(div);
+                });
+            }
+        }
+
+        function showStep1() {
+            document.getElementById('step2').classList.remove('active');
+            document.getElementById('step1').classList.add('active');
+        }
+
+        document.getElementById('reviewForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            // Collect updated data
+            const finalData = {
+                name: document.getElementById('name').value,
+                email: document.getElementById('email').value,
+                phone: document.getElementById('phone').value,
+                location: document.getElementById('location').value,
+                linkedin: document.getElementById('linkedin').value,
+                summary: document.getElementById('summary').value,
+                experience: [],
+                education: [],
+                skills: [],
+                certifications: []
+            };
+
+            // Collect experience
+            document.querySelectorAll('[data-exp-index]').forEach(el => {
+                const index = parseInt(el.dataset.expIndex);
+                const field = el.dataset.field;
+                
+                if (!finalData.experience[index]) {
+                    finalData.experience[index] = {};
+                }
+                
+                if (field === 'responsibilities') {
+                    finalData.experience[index][field] = el.value.split('\n').filter(r => r.trim());
+                } else {
+                    finalData.experience[index][field] = el.value;
+                }
+            });
+
+            // Collect education
+            document.querySelectorAll('[data-edu-index]').forEach(el => {
+                const index = parseInt(el.dataset.eduIndex);
+                const field = el.dataset.field;
+                
+                if (!finalData.education[index]) {
+                    finalData.education[index] = {};
+                }
+                
+                finalData.education[index][field] = el.value;
+            });
+
+            // Collect skills
+            document.querySelectorAll('[data-skill-index]').forEach(el => {
+                const index = parseInt(el.dataset.skillIndex);
+                const field = el.dataset.field;
+                
+                if (!finalData.skills[index]) {
+                    finalData.skills[index] = {};
+                }
+                
+                if (field === 'items') {
+                    finalData.skills[index][field] = el.value.split(',').map(s => s.trim()).filter(s => s);
+                } else {
+                    finalData.skills[index][field] = el.value;
+                }
+            });
+
+            // Collect certifications
+            document.querySelectorAll('[data-cert-index]').forEach(el => {
+                const index = parseInt(el.dataset.certIndex);
+                finalData.certifications[index] = el.value;
+            });
+
+            // Show loading
+            document.getElementById('step2').classList.remove('active');
+            document.getElementById('finalLoading').classList.remove('hidden');
+
+            try {
+                const response = await fetch('/generate-pdf', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(finalData)
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'ATS_Resume.pdf';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+
+                    alert('✅ Resume generated successfully!');
+                    
+                    // Reset to step 1
+                    document.getElementById('finalLoading').classList.add('hidden');
+                    document.getElementById('step1').classList.add('active');
+                    document.getElementById('fileInput').value = '';
+                    document.getElementById('resumeText').value = '';
+                    document.getElementById('fileName').textContent = '';
+                } else {
+                    throw new Error('Failed to generate PDF');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                document.getElementById('finalLoading').classList.add('hidden');
+                document.getElementById('step2').classList.add('active');
+            }
+        });
+    </script>
+</body>
+</html>

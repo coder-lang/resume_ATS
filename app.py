@@ -1,5 +1,4 @@
-from reportlab.lib.colors import HexColor, black, white
-from reportlab.platypus import Table, TableStylefrom flask import Flask, render_template, request, jsonify, send_file, Response
+from flask import Flask, render_template, request, jsonify, send_file, Response
 from werkzeug.utils import secure_filename
 import os
 from openai import OpenAI
@@ -465,3 +464,4 @@ def download_pdf():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5002))  # Render provides PORT env variable
     app.run(host='0.0.0.0', port=port, debug=False)  # host='0.0.0.0' allows external access
+

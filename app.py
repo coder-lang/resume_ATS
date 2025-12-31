@@ -1,4 +1,4 @@
-# app.py - Pure Python ATS Resume Generator
+# app.py - Enhanced ATS Resume Builder with Best Practices
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 import os
@@ -10,12 +10,10 @@ from openai import OpenAI
 
 from docx import Document
 from docx.shared import Pt, RGBColor, Inches
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
-from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
-# ---------------------------
-# App & configuration
-# ---------------------------
 load_dotenv()
 
 app = Flask(__name__)
@@ -31,7 +29,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 ALLOWED_EXTENSIONS = {'pdf', 'docx', 'txt'}
 
 # ---------------------------
-# File parsing helpers
+# File parsing
 # ---------------------------
 def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -49,83 +47,86 @@ def extract_text_from_docx(file_path: str) -> str:
     return '\n'.join([p.text for p in doc.paragraphs])
 
 # ---------------------------
-# AI extraction
+# AI extraction with streaming support
 # ---------------------------
 def extract_resume_data_with_ai(resume_text: str) -> dict:
-    prompt = f"""Extract structured information from this resume and return ONLY a JSON object.
+    max_length = 6000
+    if len(resume_text) > max_length:
+        resume_text = resume_text[:max_length] + "\n...(truncated)"
+    
+    prompt = f"""Extract resume data and return ONLY valid JSON:
 
-CRITICAL RULES:
-- Use null for ANY missing information (never use trailing commas)
-- Use empty arrays [] for missing lists
-- Extract ALL work experience entries
-- Keep dates, names, and text EXACTLY as written
-- Never invent or assume data
-- Return VALID JSON without trailing commas
-
-JSON Format:
 {{
-  "name": "Full Name or null",
-  "email": "email or null",
-  "phone": "phone or null",
-  "address": "address or null",
-  "linkedin": "LinkedIn URL or null",
-  "github": "GitHub URL or null",
-  "portfolio": "Portfolio URL or null",
+  "personal": {{
+    "name": "Full Name",
+    "email": "email",
+    "phone": "phone",
+    "location": "City, State",
+    "linkedin": "URL or null",
+    "github": "URL or null",
+    "portfolio": "URL or null"
+  }},
   "summary": "Professional summary or null",
-  
   "education": [
     {{
-      "institution": "University Name",
-      "degree": "Degree Name",
-      "field": "Field of Study",
-      "location": "City, State or null",
-      "graduation_date": "Date",
+      "institution": "University",
+      "degree": "Degree",
+      "field": "Major",
+      "location": "City, State",
+      "graduation": "Year",
       "gpa": "GPA or null",
-      "honors": ["Honor 1"]
+      "achievements": ["Achievement 1"]
     }}
   ],
-  
   "experience": [
     {{
       "company": "Company Name",
       "position": "Job Title",
-      "location": "City, State or null",
-      "start_date": "Date",
-      "end_date": "Date or Present",
-      "achievements": ["Achievement 1", "Achievement 2"]
+      "location": "City, State",
+      "start": "Date",
+      "end": "Date or Present",
+      "description": "Brief description or null",
+      "achievements": ["Key achievement 1", "Key achievement 2"]
     }}
   ],
-  
   "projects": [
     {{
       "name": "Project Name",
       "description": "Brief description",
-      "technologies": ["Tech 1", "Tech 2"],
+      "technologies": ["Tech1", "Tech2"],
+      "start": "Date or null",
+      "end": "Date or null",
       "achievements": ["Achievement 1"]
     }}
   ],
-  
   "skills": {{
-    "technical": ["Skill 1", "Skill 2"],
-    "languages": ["Language 1"],
-    "tools": ["Tool 1"],
-    "certifications": ["Cert 1"]
+    "technical": ["Python", "React"],
+    "soft": ["Leadership", "Communication"],
+    "languages": ["English (Native)", "Spanish (Intermediate)"],
+    "tools": ["Git", "Docker"],
+    "additional": ["Additional skill 1"]
   }},
-  
+  "certifications": [
+    {{
+      "name": "Certification Name",
+      "issuer": "Issuing Organization",
+      "date": "Date or null",
+      "credential": "Credential ID or null"
+    }}
+  ],
   "leadership": [
     {{
-      "organization": "Org Name",
-      "role": "Role Title",
-      "location": "Location or null",
-      "start_date": "Date",
-      "end_date": "Date or Present",
+      "organization": "Organization Name",
+      "role": "Position",
+      "location": "City, State or null",
+      "start": "Date",
+      "end": "Date or Present",
       "achievements": ["Achievement 1"]
     }}
   ]
 }}
 
-Resume:
-{resume_text}
+Resume: {resume_text}
 
 Return ONLY valid JSON without trailing commas."""
 
@@ -133,11 +134,12 @@ Return ONLY valid JSON without trailing commas."""
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a resume parser. Return only valid JSON with null for missing data. Never use trailing commas."},
+                {"role": "system", "content": "You are a resume parser. Return valid JSON. Use null for missing data."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,
-            max_tokens=3000
+            max_tokens=2000,
+            timeout=25
         )
         result = response.choices[0].message.content.strip()
         
@@ -145,115 +147,103 @@ Return ONLY valid JSON without trailing commas."""
         if result.startswith("```"):
             parts = result.split("```")
             result = parts[1] if len(parts) > 1 else result
-        if result.lower().startswith("json"):
-            result = result[4:].strip()
+        result = result.strip().lstrip("json").strip()
         
-        # Remove trailing commas (common AI mistake)
+        # Remove trailing commas
         import re
         result = re.sub(r',(\s*[}\]])', r'\1', result)
         
         return json.loads(result)
-    except json.JSONDecodeError as je:
-        print(f"JSON parsing error: {str(je)}")
-        print(f"AI Response: {result[:500]}...")
-        
-        # Try to fix common JSON issues
-        try:
-            import re
-            # Remove trailing commas more aggressively
-            fixed = re.sub(r',(\s*[}\]])', r'\1', result)
-            # Remove comments if any
-            fixed = re.sub(r'//.*?\n', '\n', fixed)
-            fixed = re.sub(r'/\*.*?\*/', '', fixed, flags=re.DOTALL)
-            return json.loads(fixed)
-        except:
-            raise ValueError(f"Could not parse AI response as JSON: {str(je)}")
     except Exception as e:
-        print(f"AI extraction error: {str(e)}")
+        print(f"AI error: {str(e)}")
         raise
 
 # ---------------------------
-# Data validation
+# Validation helpers
 # ---------------------------
 def has_value(val):
-    """Check if value has actual data."""
     if val is None:
         return False
     if isinstance(val, str):
         val = val.strip().lower()
-        if not val or val in ['null', 'none', 'n/a', 'na']:
-            return False
-        return True
-    if isinstance(val, list):
-        return len([x for x in val if has_value(x)]) > 0
-    if isinstance(val, dict):
-        return any(has_value(v) for v in val.values())
+        return bool(val) and val not in ['null', 'none', 'n/a']
+    if isinstance(val, (list, dict)):
+        return bool(val)
     return bool(val)
 
 def clean_list(items):
-    """Return only valid items from list."""
     if not items:
         return []
     return [str(x).strip() for x in items if has_value(x)]
 
 # ---------------------------
-# Resume Generation Engine
+# Enhanced Resume Generator with Modern Design
 # ---------------------------
-class ATSResumeGenerator:
-    """Generates beautiful, ATS-friendly resumes from scratch."""
+class ModernATSResumeGenerator:
+    """Production-ready ATS resume generator with modern design"""
     
     def __init__(self):
         self.doc = Document()
-        self.setup_document_styles()
+        self.setup_document()
     
-    def setup_document_styles(self):
-        """Configure document margins and styles."""
+    def setup_document(self):
+        """Configure margins and default styles"""
         sections = self.doc.sections
         for section in sections:
             section.top_margin = Inches(0.5)
             section.bottom_margin = Inches(0.5)
-            section.left_margin = Inches(0.7)
-            section.right_margin = Inches(0.7)
+            section.left_margin = Inches(0.6)
+            section.right_margin = Inches(0.6)
+    
+    def add_horizontal_line(self):
+        """Add a thin horizontal separator line"""
+        para = self.doc.add_paragraph()
+        para.paragraph_format.space_before = Pt(0)
+        para.paragraph_format.space_after = Pt(8)
+        run = para.add_run('─' * 100)
+        run.font.size = Pt(9)
+        run.font.color.rgb = RGBColor(180, 180, 180)
     
     def add_header(self, data):
-        """Add name and contact information header."""
-        if not has_value(data.get('name')):
+        """Add professional header with contact info"""
+        personal = data.get('personal', {})
+        
+        if not has_value(personal.get('name')):
             return
         
-        # Name - Large, Bold, Centered
+        # Name - Large and centered
         name_para = self.doc.add_paragraph()
         name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        name_run = name_para.add_run(data['name'].upper())
-        name_run.font.size = Pt(20)
+        name_run = name_para.add_run(personal['name'].upper())
+        name_run.font.size = Pt(22)
         name_run.font.bold = True
         name_run.font.color.rgb = RGBColor(0, 0, 0)
         name_para.paragraph_format.space_after = Pt(4)
-        name_para.paragraph_format.space_before = Pt(0)
         
-        # Contact Info - Centered, smaller
-        contact_parts = []
-        if has_value(data.get('email')):
-            contact_parts.append(data['email'])
-        if has_value(data.get('phone')):
-            contact_parts.append(data['phone'])
-        if has_value(data.get('address')):
-            contact_parts.append(data['address'])
+        # Contact info line
+        contact = []
+        if has_value(personal.get('email')):
+            contact.append(personal['email'])
+        if has_value(personal.get('phone')):
+            contact.append(personal['phone'])
+        if has_value(personal.get('location')):
+            contact.append(personal['location'])
         
-        if contact_parts:
+        if contact:
             contact_para = self.doc.add_paragraph()
             contact_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            contact_run = contact_para.add_run(' | '.join(contact_parts))
+            contact_run = contact_para.add_run(' | '.join(contact))
             contact_run.font.size = Pt(10)
             contact_para.paragraph_format.space_after = Pt(3)
         
-        # Links - Centered
+        # Social links
         links = []
-        if has_value(data.get('linkedin')):
-            links.append(f"LinkedIn: {data['linkedin']}")
-        if has_value(data.get('github')):
-            links.append(f"GitHub: {data['github']}")
-        if has_value(data.get('portfolio')):
-            links.append(f"Portfolio: {data['portfolio']}")
+        if has_value(personal.get('linkedin')):
+            links.append(f"LinkedIn: {personal['linkedin']}")
+        if has_value(personal.get('github')):
+            links.append(f"GitHub: {personal['github']}")
+        if has_value(personal.get('portfolio')):
+            links.append(f"Portfolio: {personal['portfolio']}")
         
         if links:
             links_para = self.doc.add_paragraph()
@@ -261,24 +251,23 @@ class ATSResumeGenerator:
             links_run = links_para.add_run(' | '.join(links))
             links_run.font.size = Pt(9)
             links_run.font.color.rgb = RGBColor(0, 102, 204)
-            links_para.paragraph_format.space_after = Pt(8)
-    
-    def add_section_header(self, title):
-        """Add a section header with underline."""
-        # Add spacing before section
-        self.add_spacing(12)
+            links_para.paragraph_format.space_after = Pt(2)
         
+        self.add_horizontal_line()
+    
+    def add_section_title(self, title):
+        """Add centered section header"""
         para = self.doc.add_paragraph()
         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        para.paragraph_format.space_before = Pt(12)
+        para.paragraph_format.space_after = Pt(2)
+        
         run = para.add_run(title.upper())
         run.font.size = Pt(12)
         run.font.bold = True
         run.font.color.rgb = RGBColor(0, 0, 0)
         
-        para.paragraph_format.space_after = Pt(2)
-        para.paragraph_format.space_before = Pt(0)
-        
-        # Horizontal line
+        # Add underline
         line_para = self.doc.add_paragraph()
         line_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
         line_para.paragraph_format.space_after = Pt(10)
@@ -287,45 +276,45 @@ class ATSResumeGenerator:
         line_run.font.color.rgb = RGBColor(100, 100, 100)
     
     def add_summary(self, data):
-        """Add professional summary."""
+        """Add professional summary"""
         if not has_value(data.get('summary')):
             return
         
-        self.add_section_header('Professional Summary')
+        self.add_section_title('Professional Summary')
         
         para = self.doc.add_paragraph()
         para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        para.paragraph_format.line_spacing = 1.15
         run = para.add_run(data['summary'])
         run.font.size = Pt(10)
         para.paragraph_format.space_after = Pt(12)
-        para.paragraph_format.line_spacing = 1.15
     
     def add_education(self, data):
-        """Add education section."""
+        """Add education section"""
         education = data.get('education', [])
         if not education:
             return
         
-        self.add_section_header('Education')
+        self.add_section_title('Education')
         
         for edu in education:
             if not has_value(edu.get('institution')):
                 continue
             
-            # Institution and Location
-            header_para = self.doc.add_paragraph()
-            header_para.paragraph_format.space_after = Pt(2)
+            # Institution line
+            inst_para = self.doc.add_paragraph()
+            inst_para.paragraph_format.space_after = Pt(2)
             
-            inst_run = header_para.add_run(edu['institution'])
+            inst_run = inst_para.add_run(edu['institution'])
             inst_run.font.bold = True
             inst_run.font.size = Pt(11)
             
             if has_value(edu.get('location')):
-                loc_run = header_para.add_run(f" — {edu['location']}")
+                loc_run = inst_para.add_run(f" — {edu['location']}")
                 loc_run.font.size = Pt(10)
                 loc_run.font.italic = True
             
-            # Degree and Date
+            # Degree line
             degree_para = self.doc.add_paragraph()
             degree_para.paragraph_format.space_after = Pt(2)
             
@@ -340,9 +329,9 @@ class ATSResumeGenerator:
                 degree_run.font.size = Pt(10)
                 degree_run.font.italic = True
             
-            if has_value(edu.get('graduation_date')):
-                date_run = degree_para.add_run(f" | {edu['graduation_date']}")
-                date_run.font.size = Pt(10)
+            if has_value(edu.get('graduation')):
+                grad_run = degree_para.add_run(f" | {edu['graduation']}")
+                grad_run.font.size = Pt(10)
             
             # GPA
             if has_value(edu.get('gpa')):
@@ -351,58 +340,66 @@ class ATSResumeGenerator:
                 gpa_run = gpa_para.add_run(f"GPA: {edu['gpa']}")
                 gpa_run.font.size = Pt(10)
             
-            # Honors
-            honors = clean_list(edu.get('honors', []))
-            if honors:
-                honors_para = self.doc.add_paragraph()
-                honors_para.paragraph_format.space_after = Pt(10)
-                honors_run = honors_para.add_run(f"Honors: {', '.join(honors)}")
-                honors_run.font.size = Pt(10)
+            # Achievements
+            achievements = clean_list(edu.get('achievements', []))
+            if achievements:
+                ach_para = self.doc.add_paragraph()
+                ach_para.paragraph_format.space_after = Pt(10)
+                ach_run = ach_para.add_run(f"Achievements: {', '.join(achievements)}")
+                ach_run.font.size = Pt(10)
             else:
-                self.add_spacing(10)
+                self.doc.add_paragraph().paragraph_format.space_after = Pt(10)
     
     def add_experience(self, data):
-        """Add work experience section."""
+        """Add work experience with key achievements"""
         experience = data.get('experience', [])
         if not experience:
             return
         
-        self.add_section_header('Professional Experience')
+        self.add_section_title('Professional Experience')
         
         for exp in experience:
             if not has_value(exp.get('company')) or not has_value(exp.get('position')):
                 continue
             
-            # Company and Location
-            company_para = self.doc.add_paragraph()
-            company_para.paragraph_format.space_after = Pt(2)
-            company_run = company_para.add_run(exp['company'])
-            company_run.font.bold = True
-            company_run.font.size = Pt(11)
+            # Company line
+            comp_para = self.doc.add_paragraph()
+            comp_para.paragraph_format.space_after = Pt(2)
+            comp_run = comp_para.add_run(exp['company'])
+            comp_run.font.bold = True
+            comp_run.font.size = Pt(11)
             
             if has_value(exp.get('location')):
-                loc_run = company_para.add_run(f" — {exp['location']}")
+                loc_run = comp_para.add_run(f" — {exp['location']}")
                 loc_run.font.size = Pt(10)
                 loc_run.font.italic = True
             
-            # Position and Dates
-            position_para = self.doc.add_paragraph()
-            position_para.paragraph_format.space_after = Pt(4)
-            position_run = position_para.add_run(exp['position'])
-            position_run.font.size = Pt(10)
-            position_run.font.italic = True
+            # Position and dates
+            pos_para = self.doc.add_paragraph()
+            pos_para.paragraph_format.space_after = Pt(4)
+            pos_run = pos_para.add_run(exp['position'])
+            pos_run.font.size = Pt(10)
+            pos_run.font.italic = True
             
             dates = []
-            if has_value(exp.get('start_date')):
-                dates.append(exp['start_date'])
-            if has_value(exp.get('end_date')):
-                dates.append(exp['end_date'])
+            if has_value(exp.get('start')):
+                dates.append(exp['start'])
+            if has_value(exp.get('end')):
+                dates.append(exp['end'])
             
             if dates:
-                date_run = position_para.add_run(f" | {' – '.join(dates)}")
+                date_run = pos_para.add_run(f" | {' – '.join(dates)}")
                 date_run.font.size = Pt(10)
             
-            # Achievements
+            # Description (if exists)
+            if has_value(exp.get('description')):
+                desc_para = self.doc.add_paragraph()
+                desc_para.paragraph_format.space_after = Pt(4)
+                desc_run = desc_para.add_run(exp['description'])
+                desc_run.font.size = Pt(10)
+                desc_run.font.italic = True
+            
+            # Key Achievements (most important for ATS!)
             achievements = clean_list(exp.get('achievements', []))
             for achievement in achievements:
                 bullet_para = self.doc.add_paragraph(style='List Bullet')
@@ -412,26 +409,38 @@ class ATSResumeGenerator:
                 bullet_run = bullet_para.add_run(achievement)
                 bullet_run.font.size = Pt(10)
             
-            self.add_spacing(10)
+            self.doc.add_paragraph().paragraph_format.space_after = Pt(10)
     
     def add_projects(self, data):
-        """Add projects section."""
+        """Add projects with achievements"""
         projects = data.get('projects', [])
         if not projects:
             return
         
-        self.add_section_header('Projects')
+        self.add_section_title('Projects')
         
         for proj in projects:
             if not has_value(proj.get('name')):
                 continue
             
-            # Project Name
+            # Project name
             name_para = self.doc.add_paragraph()
             name_para.paragraph_format.space_after = Pt(2)
             name_run = name_para.add_run(proj['name'])
             name_run.font.bold = True
             name_run.font.size = Pt(11)
+            
+            # Dates (if exists)
+            dates = []
+            if has_value(proj.get('start')):
+                dates.append(proj['start'])
+            if has_value(proj.get('end')):
+                dates.append(proj['end'])
+            
+            if dates:
+                date_run = name_para.add_run(f" | {' – '.join(dates)}")
+                date_run.font.size = Pt(9)
+                date_run.font.italic = True
             
             # Description
             if has_value(proj.get('description')):
@@ -450,7 +459,7 @@ class ATSResumeGenerator:
                 tech_run.font.size = Pt(9)
                 tech_run.font.color.rgb = RGBColor(80, 80, 80)
             
-            # Achievements
+            # Key Achievements
             achievements = clean_list(proj.get('achievements', []))
             for achievement in achievements:
                 bullet_para = self.doc.add_paragraph(style='List Bullet')
@@ -460,73 +469,101 @@ class ATSResumeGenerator:
                 bullet_run = bullet_para.add_run(achievement)
                 bullet_run.font.size = Pt(10)
             
-            self.add_spacing(10)
+            self.doc.add_paragraph().paragraph_format.space_after = Pt(10)
     
     def add_skills(self, data):
-        """Add skills section."""
+        """Add comprehensive skills section"""
         skills = data.get('skills', {})
         if not skills or not any(has_value(v) for v in skills.values()):
             return
         
-        self.add_section_header('Skills & Expertise')
+        self.add_section_title('Skills')
         
         # Technical Skills
         technical = clean_list(skills.get('technical', []))
         if technical:
-            skill_para = self.doc.add_paragraph()
-            skill_para.paragraph_format.space_after = Pt(4)
-            label_run = skill_para.add_run('Technical Skills: ')
-            label_run.font.bold = True
-            label_run.font.size = Pt(10)
-            skills_run = skill_para.add_run(', '.join(technical))
-            skills_run.font.size = Pt(10)
+            self._add_skill_line('Technical Skills', technical)
+        
+        # Soft Skills
+        soft = clean_list(skills.get('soft', []))
+        if soft:
+            self._add_skill_line('Soft Skills', soft)
         
         # Languages
         languages = clean_list(skills.get('languages', []))
         if languages:
-            lang_para = self.doc.add_paragraph()
-            lang_para.paragraph_format.space_after = Pt(4)
-            label_run = lang_para.add_run('Languages: ')
-            label_run.font.bold = True
-            label_run.font.size = Pt(10)
-            lang_run = lang_para.add_run(', '.join(languages))
-            lang_run.font.size = Pt(10)
+            self._add_skill_line('Languages', languages)
         
         # Tools
         tools = clean_list(skills.get('tools', []))
         if tools:
-            tools_para = self.doc.add_paragraph()
-            tools_para.paragraph_format.space_after = Pt(4)
-            label_run = tools_para.add_run('Tools & Platforms: ')
-            label_run.font.bold = True
-            label_run.font.size = Pt(10)
-            tools_run = tools_para.add_run(', '.join(tools))
-            tools_run.font.size = Pt(10)
+            self._add_skill_line('Tools & Platforms', tools)
         
-        # Certifications
-        certs = clean_list(skills.get('certifications', []))
-        if certs:
+        # Additional Skills
+        additional = clean_list(skills.get('additional', []))
+        if additional:
+            self._add_skill_line('Additional Skills', additional)
+    
+    def _add_skill_line(self, label, items):
+        """Helper to add a skill category line"""
+        para = self.doc.add_paragraph()
+        para.paragraph_format.space_after = Pt(4)
+        label_run = para.add_run(f'{label}: ')
+        label_run.font.bold = True
+        label_run.font.size = Pt(10)
+        items_run = para.add_run(', '.join(items))
+        items_run.font.size = Pt(10)
+    
+    def add_certifications(self, data):
+        """Add certifications section"""
+        certs = data.get('certifications', [])
+        if not certs:
+            return
+        
+        self.add_section_title('Certifications')
+        
+        for cert in certs:
+            if not has_value(cert.get('name')):
+                continue
+            
             cert_para = self.doc.add_paragraph()
-            cert_para.paragraph_format.space_after = Pt(10)
-            label_run = cert_para.add_run('Certifications: ')
-            label_run.font.bold = True
-            label_run.font.size = Pt(10)
-            cert_run = cert_para.add_run(', '.join(certs))
-            cert_run.font.size = Pt(10)
+            cert_para.paragraph_format.space_after = Pt(4)
+            
+            # Certification name
+            name_run = cert_para.add_run(cert['name'])
+            name_run.font.bold = True
+            name_run.font.size = Pt(10)
+            
+            # Issuer
+            if has_value(cert.get('issuer')):
+                issuer_run = cert_para.add_run(f" — {cert['issuer']}")
+                issuer_run.font.size = Pt(10)
+            
+            # Date
+            if has_value(cert.get('date')):
+                date_run = cert_para.add_run(f" | {cert['date']}")
+                date_run.font.size = Pt(9)
+                date_run.font.italic = True
+            
+            # Credential ID
+            if has_value(cert.get('credential')):
+                cred_run = cert_para.add_run(f" (ID: {cert['credential']})")
+                cred_run.font.size = Pt(9)
+                cred_run.font.color.rgb = RGBColor(100, 100, 100)
     
     def add_leadership(self, data):
-        """Add leadership & activities section."""
+        """Add leadership & activities"""
         leadership = data.get('leadership', [])
         if not leadership:
             return
         
-        self.add_section_header('Leadership & Activities')
+        self.add_section_title('Leadership & Activities')
         
         for lead in leadership:
             if not has_value(lead.get('organization')) or not has_value(lead.get('role')):
                 continue
             
-            # Organization and Location
+            # Organization line
             org_para = self.doc.add_paragraph()
             org_para.paragraph_format.space_after = Pt(2)
             org_run = org_para.add_run(lead['organization'])
@@ -538,7 +575,7 @@ class ATSResumeGenerator:
                 loc_run.font.size = Pt(10)
                 loc_run.font.italic = True
             
-            # Role and Dates
+            # Role and dates
             role_para = self.doc.add_paragraph()
             role_para.paragraph_format.space_after = Pt(4)
             role_run = role_para.add_run(lead['role'])
@@ -546,10 +583,10 @@ class ATSResumeGenerator:
             role_run.font.italic = True
             
             dates = []
-            if has_value(lead.get('start_date')):
-                dates.append(lead['start_date'])
-            if has_value(lead.get('end_date')):
-                dates.append(lead['end_date'])
+            if has_value(lead.get('start')):
+                dates.append(lead['start'])
+            if has_value(lead.get('end')):
+                dates.append(lead['end'])
             
             if dates:
                 date_run = role_para.add_run(f" | {' – '.join(dates)}")
@@ -565,31 +602,26 @@ class ATSResumeGenerator:
                 bullet_run = bullet_para.add_run(achievement)
                 bullet_run.font.size = Pt(10)
             
-            self.add_spacing(10)
-    
-    def add_spacing(self, points):
-        """Add vertical spacing."""
-        para = self.doc.add_paragraph()
-        para.paragraph_format.space_after = Pt(points)
+            self.doc.add_paragraph().paragraph_format.space_after = Pt(10)
     
     def generate(self, data):
-        """Generate complete resume."""
+        """Generate complete resume"""
         self.add_header(data)
         self.add_summary(data)
         self.add_education(data)
         self.add_experience(data)
         self.add_projects(data)
         self.add_skills(data)
+        self.add_certifications(data)
         self.add_leadership(data)
         
-        # Save to buffer
         buffer = io.BytesIO()
         self.doc.save(buffer)
         buffer.seek(0)
         return buffer
 
 # ---------------------------
-# Flask Routes
+# Routes
 # ---------------------------
 @app.route('/')
 def index():
@@ -608,23 +640,29 @@ def upload_and_extract():
                 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
                 file.save(filepath)
                 
-                if filename.lower().endswith('.pdf'):
-                    resume_text = extract_text_from_pdf(filepath)
-                elif filename.lower().endswith('.docx'):
-                    resume_text = extract_text_from_docx(filepath)
-                
                 try:
-                    os.remove(filepath)
-                except:
-                    pass
+                    if filename.lower().endswith('.pdf'):
+                        resume_text = extract_text_from_pdf(filepath)
+                    elif filename.lower().endswith('.docx'):
+                        resume_text = extract_text_from_docx(filepath)
+                    elif filename.lower().endswith('.txt'):
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            resume_text = f.read()
+                finally:
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
         
         if not resume_text and request.form.get('text_input'):
             resume_text = request.form.get('text_input')
         
-        if not resume_text:
-            return jsonify({'error': 'No resume data provided'}), 400
+        if not resume_text or len(resume_text.strip()) < 50:
+            return jsonify({'error': 'Please provide valid resume content'}), 400
         
+        print(f"Processing {len(resume_text)} characters...")
         structured_data = extract_resume_data_with_ai(resume_text)
+        print("Extraction successful!")
         return jsonify(structured_data)
     
     except Exception as e:
@@ -638,23 +676,26 @@ def generate_resume():
     try:
         data = request.get_json(force=True)
         
-        # Validate required fields
-        if not has_value(data.get('name')):
+        personal = data.get('personal', {})
+        if not has_value(personal.get('name')):
             return jsonify({'error': 'Name is required'}), 400
         
-        # Generate resume
-        generator = ATSResumeGenerator()
+        print(f"Generating resume for: {personal.get('name')}")
+        
+        generator = ModernATSResumeGenerator()
         resume_buffer = generator.generate(data)
+        
+        filename = f"{personal.get('name', 'Resume').replace(' ', '_')}_ATS_Resume.docx"
         
         return send_file(
             resume_buffer,
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             as_attachment=True,
-            download_name=f"{data.get('name', 'Resume').replace(' ', '_')}_ATS_Resume.docx"
+            download_name=filename
         )
     
     except Exception as e:
-        print(f"Error generating resume: {str(e)}")
+        print(f"Error: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

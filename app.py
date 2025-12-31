@@ -12,6 +12,7 @@ from openai import OpenAI
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.style import WD_STYLE_TYPE
+from docx.shared import Pt, RGBColor
 
 # ---------------------------
 # App & configuration
@@ -99,7 +100,11 @@ def extract_resume_data_with_ai(resume_text: str) -> dict:
   "interests": ["Interest 1", "Interest 2", "Interest 3"]
 }}
 
-IMPORTANT: If information is not found in the resume, use null or empty arrays. Do NOT make up information.
+IMPORTANT: 
+- If information is not found in the resume, use null or empty arrays. Do NOT make up information.
+- Extract ALL work experience entries from the resume in chronological order (most recent first)
+- For dates, use format like "Oct 2010" or "03/2017" as they appear in resume
+- Preserve the actual job titles and company names exactly as written
 
 Resume Text:
 {resume_text}
@@ -109,11 +114,11 @@ Return ONLY the JSON object, no other text.
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a resume parser. Return only valid JSON. Use null for missing fields, empty arrays for missing lists."},
+                {"role": "system", "content": "You are a resume parser. Return only valid JSON. Use null for missing fields, empty arrays for missing lists. Extract ALL work experience entries accurately."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            max_tokens=2000
+            max_tokens=2500
         )
         result = response.choices[0].message.content.strip()
         if result.startswith("```"):
@@ -153,16 +158,21 @@ def has_data(value):
 # Helpers: Word template ops
 # ---------------------------
 
-BULLET_STYLE_CANDIDATES = ['List Bullet', 'List Paragraph', 'Normal']
-
 def set_bullet_style(p, doc):
-    for style_name in BULLET_STYLE_CANDIDATES:
+    """Apply bullet formatting to paragraph."""
+    # Try to use built-in list styles
+    for style_name in ['List Bullet', 'List Paragraph', 'ListBullet']:
         try:
             p.style = doc.styles[style_name]
             return
         except KeyError:
             continue
+    
+    # Fallback: manually add bullet
     if p.text.strip() and not p.text.strip().startswith('•'):
+        # Add bullet with proper indentation
+        p.paragraph_format.left_indent = Pt(36)
+        p.paragraph_format.first_line_indent = Pt(-18)
         p.text = f'• {p.text}'
 
 def replace_in_paragraph(paragraph, replacements: dict):
@@ -173,10 +183,26 @@ def replace_in_paragraph(paragraph, replacements: dict):
             text = text.replace(key, str(value))
             replaced = True
     if replaced:
+        # Preserve formatting by keeping the first run's format
+        if paragraph.runs:
+            first_run_font = paragraph.runs[0].font
+            bold = first_run_font.bold
+            italic = first_run_font.italic
+            size = first_run_font.size
+        else:
+            bold = italic = size = None
+            
         while paragraph.runs:
             run = paragraph.runs[0]
             run._element.getparent().remove(run._element)
-        paragraph.add_run(text)
+        
+        new_run = paragraph.add_run(text)
+        if bold is not None:
+            new_run.font.bold = bold
+        if italic is not None:
+            new_run.font.italic = italic
+        if size is not None:
+            new_run.font.size = size
 
 def replace_text_in_doc(doc: Document, replacements: dict):
     for paragraph in doc.paragraphs:
@@ -189,7 +215,7 @@ def replace_text_in_doc(doc: Document, replacements: dict):
 
 def find_header_index(doc: Document, header_text: str):
     for i, p in enumerate(doc.paragraphs):
-        if header_text in p.text.strip():
+        if header_text.upper() in p.text.strip().upper():
             return i
     return None
 
@@ -199,23 +225,13 @@ def remove_section_completely(doc: Document, start_header: str, end_header: str 
     if start_idx is None:
         return
     
-    end_idx = find_header_index(doc, end_header) if end_header else None
+    end_idx = find_header_index(doc, end_header) if end_header else len(doc.paragraphs)
     
-    # Remove header itself
-    header_para = doc.paragraphs[start_idx]
-    header_para._element.getparent().remove(header_para._element)
-    
-    # Recalculate indices after header removal
-    start_idx = find_header_index(doc, end_header) if end_header else None
-    if start_idx is not None:
-        # Remove content between (now that header is gone)
-        while start_idx > 0 and (end_header is None or doc.paragraphs[start_idx - 1].text.strip() != ""):
-            start_idx -= 1
-            if start_idx < len(doc.paragraphs):
-                target = doc.paragraphs[start_idx]
-                if end_header and end_header in target.text:
-                    break
-                target._element.getparent().remove(target._element)
+    # Remove from start_idx to end_idx
+    for _ in range(end_idx - start_idx):
+        if start_idx < len(doc.paragraphs):
+            target = doc.paragraphs[start_idx]
+            target._element.getparent().remove(target._element)
 
 def remove_between(doc: Document, start_header: str, end_header: str):
     """Remove content between two headers (keep both headers)."""
@@ -236,9 +252,12 @@ def remove_between(doc: Document, start_header: str, end_header: str):
 
 def remove_line_containing(doc: Document, text: str):
     """Remove any paragraph containing specific text."""
-    for p in list(doc.paragraphs):
+    to_remove = []
+    for p in doc.paragraphs:
         if text in p.text:
-            p._element.getparent().remove(p._element)
+            to_remove.append(p)
+    for p in to_remove:
+        p._element.getparent().remove(p._element)
 
 def insert_before_index(doc: Document, idx: int, text: str = ""):
     if idx is None or idx >= len(doc.paragraphs):
@@ -249,11 +268,14 @@ def insert_before_index(doc: Document, idx: int, text: str = ""):
 def normalize_header(doc: Document, data: dict):
     """Fix the combined header and add name at top."""
     for i, p in enumerate(doc.paragraphs):
-        if 'EDUCATION' in p.text and 'Your Name' in p.text:
-            # Add name above as separate paragraph
-            name_line = p.insert_paragraph_before(data.get('name', 'Your Name'))
-            # Keep just EDUCATION
-            p.text = 'EDUCATION'
+        text = p.text.strip()
+        # Check if this is the combined header line
+        if 'Your Name' in text:
+            # Replace the entire paragraph with just the name
+            p.clear()
+            run = p.add_run(data.get('name', 'Your Name'))
+            run.font.bold = True
+            run.font.size = Pt(14)
             return
 
 def fill_word_template(data: dict) -> io.BytesIO:
@@ -275,9 +297,15 @@ def fill_word_template(data: dict) -> io.BytesIO:
     has_interests = len(non_empty_list(data.get('interests'))) > 0
     has_skills = has_languages or has_computer or has_interests
 
-    print(f"Section availability: Education={has_education}, Experience={has_experience}, Leadership={has_leadership}, Skills={has_skills}")
+    print(f"Data check - Experience entries: {len(data.get('experience', []))}")
+    for i, exp in enumerate(data.get('experience', [])):
+        print(f"  Entry {i+1}: {exp.get('company')} - {exp.get('position')}")
 
-    # Basic replacements
+    # Basic contact info replacements
+    contact_line = []
+    if has_data(data.get('address')):
+        contact_line.append(data.get('address'))
+    
     replacements = {
         'Your Name': data.get('name', 'Your Name'),
         '555 Your Address, NY 10005': data.get('address', '') if has_data(data.get('address')) else '',
@@ -285,17 +313,47 @@ def fill_word_template(data: dict) -> io.BytesIO:
         '555.555.5555': data.get('phone', '') if has_data(data.get('phone')) else '',
     }
 
-    # Education section replacements (only if has education data)
+    # Update contact line to combine address
+    for p in doc.paragraphs:
+        if '555 Your Address' in p.text or 'your-email@gmail.edu' in p.text:
+            # Rebuild contact line
+            contact_parts = []
+            if has_data(data.get('address')):
+                contact_parts.append(data.get('address'))
+            contact_line_text = '\n'.join(contact_parts) if contact_parts else ''
+            
+            email_phone_parts = []
+            if has_data(data.get('email')):
+                email_phone_parts.append(data.get('email'))
+            if has_data(data.get('phone')):
+                email_phone_parts.append(data.get('phone'))
+            email_phone_line = ' | '.join(email_phone_parts)
+            
+            if contact_line_text and email_phone_line:
+                p.text = f"{contact_line_text}\n{email_phone_line}"
+            elif email_phone_line:
+                p.text = email_phone_line
+            elif contact_line_text:
+                p.text = contact_line_text
+            else:
+                p.text = ''
+
+    # Education section replacements
     if has_education:
-        replacements.update({
+        edu_replacements = {
+            'Your University, Your College/School': f"{data.get('university', 'Your University')}, {data.get('college', '')}" if has_data(data.get('college')) else data.get('university', 'Your University'),
             'Your University': data.get('university', 'Your University'),
-            'Your College/School': data.get('college', 'Your College/School'),
+            'Your College/School': data.get('college', '') if has_data(data.get('college')) else '',
+            'Cumulative GPA: 3._ _': f"Cumulative GPA: {data.get('gpa', '3._ _')}" if has_data(data.get('gpa')) else '',
             '3._ _': data.get('gpa', '') if has_data(data.get('gpa')) else '',
             'City, State': data.get('location', 'City, State'),
-            'Your Major: Bachelor of XYZ, ABC': f"{data.get('major', 'Bachelor of XYZ, ABC')}",
-            'Expected Graduation: Mnth Year': f"Expected Graduation: {data.get('graduation_date', 'Mnth Year')}",
-            'Your Minor: DEF': f"{data.get('minor', '')}" if has_data(data.get('minor')) else '',
-        })
+            'Your Major: Bachelor of XYZ, ABC': data.get('major', 'Bachelor of XYZ, ABC'),
+            'Bachelor of XYZ, ABC': data.get('major', 'Bachelor of XYZ, ABC'),
+            'Expected Graduation: Mnth Year': f"Expected Graduation: {data.get('graduation_date', 'Mnth Year')}" if has_data(data.get('graduation_date')) else '',
+            'Mnth Year': data.get('graduation_date', '') if has_data(data.get('graduation_date')) else '',
+            'Your Minor: DEF': f"Your Minor: {data.get('minor', '')}" if has_data(data.get('minor')) else '',
+        }
+        replace_text_in_doc(doc, edu_replacements)
 
     replace_text_in_doc(doc, replacements)
 
@@ -327,6 +385,10 @@ def fill_word_template(data: dict) -> io.BytesIO:
                     p.text = f"Relevant Coursework: {coursework_text}"
         else:
             remove_line_containing(doc, 'Relevant Coursework:')
+        
+        # Remove "Your Minor" line if no minor
+        if not has_data(data.get('minor')):
+            remove_line_containing(doc, 'Your Minor:')
 
     # Section headers
     exp_header = 'EXPERIENCE'
@@ -343,9 +405,14 @@ def fill_word_template(data: dict) -> io.BytesIO:
         
         end_header = lead_header if lead_idx is not None else skills_header if skills_idx is not None else None
         remove_between(doc, exp_header, end_header)
+        
+        # Re-find the insertion point after removal
         insert_anchor_idx = find_header_index(doc, end_header) if end_header else None
 
-        for job in reversed(data.get('experience', [])):
+        # Sort experience by date (most recent first) and insert in reverse order
+        experiences = data.get('experience', [])
+        
+        for job in reversed(experiences):
             company = job.get('company', 'Company Name')
             location = job.get('location', '')
             position = job.get('position', 'Position')
@@ -353,24 +420,33 @@ def fill_word_template(data: dict) -> io.BytesIO:
             start_date = job.get('start_date', 'Mnth Yr')
             end_date = job.get('end_date', 'Present')
 
+            # Company name and location line (BOLD)
             p = insert_before_index(doc, insert_anchor_idx, "")
-            p.add_run(f"{company}").bold = True
-            if has_data(location):
-                r = p.add_run(f" - {location}")
-                r.italic = False
+            company_run = p.add_run(company)
+            company_run.font.bold = True
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
+            # Position and date line (ITALIC position, normal dates)
             p = insert_before_index(doc, insert_anchor_idx, "")
-            run1 = p.add_run(f"{position}")
+            position_text = f"{position}"
             if has_data(detail):
-                run1.text += f", {detail}"
-            run1.italic = True
-            p.add_run(f" | {start_date} -- {end_date}")
+                position_text += f", {detail}"
+            
+            position_run = p.add_run(position_text)
+            position_run.font.italic = True
+            
+            # Add date with separator
+            date_text = f" | {start_date} -- {end_date}"
+            if has_data(location):
+                date_text = f", {location}{date_text}"
+            p.add_run(date_text)
 
+            # Responsibilities as bullet points
             for resp in non_empty_list(job.get('responsibilities')):
                 bp = insert_before_index(doc, insert_anchor_idx, resp)
                 set_bullet_style(bp, doc)
 
+            # Add blank line after each job
             insert_before_index(doc, insert_anchor_idx, "")
 
     # Handle LEADERSHIP section
@@ -391,19 +467,26 @@ def fill_word_template(data: dict) -> io.BytesIO:
             start_date = activity.get('start_date', 'Mnth Yr')
             end_date = activity.get('end_date', 'Present')
 
+            # Organization name (BOLD)
             p = insert_before_index(doc, insert_anchor_idx, "")
-            p.add_run(f"{org}").bold = True
-            if has_data(location):
-                r = p.add_run(f" - {location}")
-                r.italic = False
+            org_run = p.add_run(org)
+            org_run.font.bold = True
 
+            # Position and date line
             p = insert_before_index(doc, insert_anchor_idx, "")
-            run1 = p.add_run(f"{position}")
+            position_text = f"{position}"
             if has_data(detail):
-                run1.text += f", {detail}"
-            run1.italic = True
-            p.add_run(f" | {start_date} -- {end_date}")
+                position_text += f", {detail}"
+            
+            position_run = p.add_run(position_text)
+            position_run.font.italic = True
+            
+            date_text = f" | {start_date} -- {end_date}"
+            if has_data(location):
+                date_text = f", {location}{date_text}"
+            p.add_run(date_text)
 
+            # Responsibilities
             for resp in non_empty_list(activity.get('responsibilities')):
                 bp = insert_before_index(doc, insert_anchor_idx, resp)
                 set_bullet_style(bp, doc)
@@ -426,15 +509,32 @@ def fill_word_template(data: dict) -> io.BytesIO:
             languages = non_empty_list(data.get('languages'))
             for p in doc.paragraphs:
                 if 'Language:' in p.text:
-                    p.text = f"Language: {', '.join(languages)}"
+                    lang_run = p.add_run()
+                    p.clear()
+                    p.add_run('Language: ').bold = True
+                    p.add_run(', '.join(languages))
+                    break
         else:
             remove_line_containing(doc, 'Language:')
         
         if has_computer:
             computers = non_empty_list(data.get('computer_skills'))
+            found = False
             for p in doc.paragraphs:
                 if 'Computer:' in p.text:
-                    p.text = f"Computer: {', '.join(computers)}"
+                    p.clear()
+                    p.add_run('Computer: ').bold = True
+                    p.add_run(', '.join(computers))
+                    found = True
+                    break
+            
+            # If Computer: line doesn't exist, add it
+            if not found and has_computer:
+                skills_idx = find_header_index(doc, skills_header)
+                if skills_idx is not None:
+                    p = insert_before_index(doc, skills_idx + 1, "")
+                    p.add_run('Computer: ').bold = True
+                    p.add_run(', '.join(computers))
         else:
             remove_line_containing(doc, 'Computer:')
         
@@ -442,7 +542,10 @@ def fill_word_template(data: dict) -> io.BytesIO:
             interests = non_empty_list(data.get('interests'))
             for p in doc.paragraphs:
                 if 'Interests:' in p.text:
-                    p.text = f"Interests: {', '.join(interests)}"
+                    p.clear()
+                    p.add_run('Interests: ').bold = True
+                    p.add_run(', '.join(interests))
+                    break
         else:
             remove_line_containing(doc, 'Interests:')
 
@@ -501,7 +604,8 @@ def upload_and_extract():
 
         print("Extracting data with AI...")
         structured_data = extract_resume_data_with_ai(resume_text)
-        print("Extraction successful. Keys:", list(structured_data.keys()))
+        print("Extraction successful.")
+        print(f"Found {len(structured_data.get('experience', []))} experience entries")
         return jsonify(structured_data)
 
     except ValueError as ve:

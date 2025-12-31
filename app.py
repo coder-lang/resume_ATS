@@ -1,4 +1,3 @@
-
 # app.py
 from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
@@ -99,6 +98,9 @@ def extract_resume_data_with_ai(resume_text: str) -> dict:
   "computer_skills": ["Skill 1", "Skill 2", "Skill 3"],
   "interests": ["Interest 1", "Interest 2", "Interest 3"]
 }}
+
+IMPORTANT: If information is not found in the resume, use null or empty arrays. Do NOT make up information.
+
 Resume Text:
 {resume_text}
 Return ONLY the JSON object, no other text.
@@ -107,7 +109,7 @@ Return ONLY the JSON object, no other text.
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a resume parser. Return only valid JSON."},
+                {"role": "system", "content": "You are a resume parser. Return only valid JSON. Use null for missing fields, empty arrays for missing lists."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
@@ -127,6 +129,27 @@ Return ONLY the JSON object, no other text.
         raise
 
 # ---------------------------
+# Helpers: Data validation
+# ---------------------------
+def non_empty_list(items):
+    """Returns only non-empty, non-null items from a list."""
+    if not items:
+        return []
+    return [str(x).strip() for x in items if x and str(x).strip() and str(x).strip().lower() != 'null']
+
+def has_data(value):
+    """Check if a value contains actual data."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip()) and value.strip().lower() != 'null'
+    if isinstance(value, list):
+        return len(non_empty_list(value)) > 0
+    if isinstance(value, dict):
+        return any(has_data(v) for v in value.values())
+    return bool(value)
+
+# ---------------------------
 # Helpers: Word template ops
 # ---------------------------
 
@@ -142,11 +165,7 @@ def set_bullet_style(p, doc):
     if p.text.strip() and not p.text.strip().startswith('•'):
         p.text = f'• {p.text}'
 
-def non_empty_list(items):
-    return [str(x).strip() for x in (items or []) if x and str(x).strip()]
-
 def replace_in_paragraph(paragraph, replacements: dict):
-    # Safe paragraph-level replacement (resets runs in the paragraph)
     text = paragraph.text
     replaced = False
     for key, value in replacements.items():
@@ -170,11 +189,36 @@ def replace_text_in_doc(doc: Document, replacements: dict):
 
 def find_header_index(doc: Document, header_text: str):
     for i, p in enumerate(doc.paragraphs):
-        if p.text.strip() == header_text:
+        if header_text in p.text.strip():
             return i
     return None
 
+def remove_section_completely(doc: Document, start_header: str, end_header: str = None):
+    """Remove entire section including header."""
+    start_idx = find_header_index(doc, start_header)
+    if start_idx is None:
+        return
+    
+    end_idx = find_header_index(doc, end_header) if end_header else None
+    
+    # Remove header itself
+    header_para = doc.paragraphs[start_idx]
+    header_para._element.getparent().remove(header_para._element)
+    
+    # Recalculate indices after header removal
+    start_idx = find_header_index(doc, end_header) if end_header else None
+    if start_idx is not None:
+        # Remove content between (now that header is gone)
+        while start_idx > 0 and (end_header is None or doc.paragraphs[start_idx - 1].text.strip() != ""):
+            start_idx -= 1
+            if start_idx < len(doc.paragraphs):
+                target = doc.paragraphs[start_idx]
+                if end_header and end_header in target.text:
+                    break
+                target._element.getparent().remove(target._element)
+
 def remove_between(doc: Document, start_header: str, end_header: str):
+    """Remove content between two headers (keep both headers)."""
     start_idx = find_header_index(doc, start_header)
     end_idx = find_header_index(doc, end_header) if end_header else None
     if start_idx is None:
@@ -186,8 +230,15 @@ def remove_between(doc: Document, start_header: str, end_header: str):
     else:
         count = end_idx - start_idx - 1
         for _ in range(max(0, count)):
-            target = doc.paragraphs[start_idx + 1]
-            target._element.getparent().remove(target._element)
+            if start_idx + 1 < len(doc.paragraphs):
+                target = doc.paragraphs[start_idx + 1]
+                target._element.getparent().remove(target._element)
+
+def remove_line_containing(doc: Document, text: str):
+    """Remove any paragraph containing specific text."""
+    for p in list(doc.paragraphs):
+        if text in p.text:
+            p._element.getparent().remove(p._element)
 
 def insert_before_index(doc: Document, idx: int, text: str = ""):
     if idx is None or idx >= len(doc.paragraphs):
@@ -196,104 +247,104 @@ def insert_before_index(doc: Document, idx: int, text: str = ""):
     return anchor.insert_paragraph_before(text)
 
 def normalize_header(doc: Document, data: dict):
-    """
-    Fix the combined 'EDUCATIONYour Name' paragraph by splitting into:
-    - 'EDUCATION' (kept as a header paragraph)
-    - A new paragraph with the user's Name
-    """
+    """Fix the combined header and add name at top."""
     for i, p in enumerate(doc.paragraphs):
-        if p.text.strip() == 'EDUCATIONYour Name':
-            # Put Name ABOVE the 'EDUCATION' header (as a top header line)
+        if 'EDUCATION' in p.text and 'Your Name' in p.text:
+            # Add name above as separate paragraph
             name_line = p.insert_paragraph_before(data.get('name', 'Your Name'))
-            # Keep 'EDUCATION' as its own header
-            p.text = 'EXPERIENCE' if False else 'EDUCATION'  # keep EDUCATION
-            return  # after first correction, stop
-    # If not found, do nothing
-
-def clear_placeholder_lines(doc: Document, data: dict):
-    """
-    If certain sections are missing, clear placeholder lines to avoid dummy text.
-    """
-    has_honors = bool(non_empty_list(data.get('honors')))
-    has_scholarships = bool(non_empty_list(data.get('scholarships')))
-    has_coursework = bool(non_empty_list(data.get('coursework')))
-    has_interests = bool(non_empty_list(data.get('interests')))
-
-    for p in doc.paragraphs:
-        t = p.text.strip()
-        if t.startswith('Honors/Awards:') and not has_honors:
-            p.text = 'Honors/Awards:'
-        elif t.startswith('Scholarships:') and not has_scholarships:
-            p.text = 'Scholarships:'
-        elif t.startswith('Relevant Coursework:') and not has_coursework:
-            p.text = 'Relevant Coursework:'
-        elif t.startswith('Interests:') and not has_interests:
-            p.text = 'Interests:'
+            # Keep just EDUCATION
+            p.text = 'EDUCATION'
+            return
 
 def fill_word_template(data: dict) -> io.BytesIO:
     doc = Document(TEMPLATE_PATH)
 
-    # Startup diagnostics
-    try:
-        para_styles = [s.name for s in doc.styles if getattr(s, 'type', None) == WD_STYLE_TYPE.PARAGRAPH]
-        print("Template paragraph styles:", para_styles)
-    except Exception:
-        pass
-
-    # Normalize the header that combines EDUCATION + Name
+    # Normalize the header
     normalize_header(doc, data)
 
-    # Basic replacements (address, email, phone, etc.)
+    # Determine what sections have data
+    has_education = has_data(data.get('university')) or has_data(data.get('major'))
+    has_honors = len(non_empty_list(data.get('honors'))) > 0
+    has_scholarships = len(non_empty_list(data.get('scholarships'))) > 0
+    has_coursework = len(non_empty_list(data.get('coursework'))) > 0
+    has_experience = len(data.get('experience', [])) > 0
+    has_leadership = len(data.get('leadership', [])) > 0
+    has_affiliations = len(non_empty_list(data.get('affiliations'))) > 0
+    has_languages = len(non_empty_list(data.get('languages'))) > 0
+    has_computer = len(non_empty_list(data.get('computer_skills'))) > 0
+    has_interests = len(non_empty_list(data.get('interests'))) > 0
+    has_skills = has_languages or has_computer or has_interests
+
+    print(f"Section availability: Education={has_education}, Experience={has_experience}, Leadership={has_leadership}, Skills={has_skills}")
+
+    # Basic replacements
     replacements = {
         'Your Name': data.get('name', 'Your Name'),
-        '555 Your Address, NY 10005': data.get('address', ''),
+        '555 Your Address, NY 10005': data.get('address', '') if has_data(data.get('address')) else '',
         'your-email@gmail.edu': data.get('email', ''),
-        '555.555.5555': data.get('phone', ''),
-        'Your University': data.get('university', 'Your University'),
-        'Your College/School': data.get('college', 'Your College/School'),
-        '3._ _': data.get('gpa', '3._ _'),
-        'City, State': data.get('location', 'City, State'),
-        'Your Major: Bachelor of XYZ, ABC': f"Your Major: {data.get('major', 'Bachelor of XYZ, ABC')}",
-        'Expected Graduation: Mnth Year': f"Expected Graduation: {data.get('graduation_date', 'Mnth Year')}",
-        'Your Minor: DEF': f"Your Minor: {data.get('minor', 'DEF')}" if data.get('minor') else 'Your Minor: ',
+        '555.555.5555': data.get('phone', '') if has_data(data.get('phone')) else '',
     }
+
+    # Education section replacements (only if has education data)
+    if has_education:
+        replacements.update({
+            'Your University': data.get('university', 'Your University'),
+            'Your College/School': data.get('college', 'Your College/School'),
+            '3._ _': data.get('gpa', '') if has_data(data.get('gpa')) else '',
+            'City, State': data.get('location', 'City, State'),
+            'Your Major: Bachelor of XYZ, ABC': f"{data.get('major', 'Bachelor of XYZ, ABC')}",
+            'Expected Graduation: Mnth Year': f"Expected Graduation: {data.get('graduation_date', 'Mnth Year')}",
+            'Your Minor: DEF': f"{data.get('minor', '')}" if has_data(data.get('minor')) else '',
+        })
 
     replace_text_in_doc(doc, replacements)
 
-    # Update merged lines for honors/scholarships/coursework
-    for paragraph in doc.paragraphs:
-        t = paragraph.text
-        if 'Honors/Awards:' in t and data.get('honors'):
-            honors_text = ', '.join(sorted(non_empty_list(data.get('honors'))))
-            paragraph.text = f"Honors/Awards: {honors_text}"
-        elif 'Scholarships:' in t and data.get('scholarships'):
-            scholarships_text = ', '.join(sorted(non_empty_list(data.get('scholarships'))))
-            paragraph.text = f"Scholarships: {scholarships_text}"
-        elif 'Relevant Coursework:' in t and data.get('coursework'):
-            coursework_text = ', '.join(sorted(non_empty_list(data.get('coursework'))))
-            paragraph.text = f"Relevant Coursework: {coursework_text}"
-
-    # Clear placeholders if sections are missing
-    clear_placeholder_lines(doc, data)
+    # Handle EDUCATION section
+    if not has_education:
+        remove_section_completely(doc, 'EDUCATION', 'EXPERIENCE')
+    else:
+        # Update education sub-sections
+        if has_honors:
+            honors_text = ', '.join(non_empty_list(data.get('honors')))
+            for p in doc.paragraphs:
+                if 'Honors/Awards:' in p.text:
+                    p.text = f"Honors/Awards: {honors_text}"
+        else:
+            remove_line_containing(doc, 'Honors/Awards:')
+        
+        if has_scholarships:
+            scholarships_text = ', '.join(non_empty_list(data.get('scholarships')))
+            for p in doc.paragraphs:
+                if 'Scholarships:' in p.text:
+                    p.text = f"Scholarships: {scholarships_text}"
+        else:
+            remove_line_containing(doc, 'Scholarships:')
+        
+        if has_coursework:
+            coursework_text = ', '.join(non_empty_list(data.get('coursework')))
+            for p in doc.paragraphs:
+                if 'Relevant Coursework:' in p.text:
+                    p.text = f"Relevant Coursework: {coursework_text}"
+        else:
+            remove_line_containing(doc, 'Relevant Coursework:')
 
     # Section headers
     exp_header = 'EXPERIENCE'
     lead_header = 'LEADERSHIP & PROFESSIONAL DEVELOPMENT'
     skills_header = 'SKILLS & INTERESTS'
 
-    exp_idx = find_header_index(doc, exp_header)
-    lead_idx = find_header_index(doc, lead_header)
-    skills_idx = find_header_index(doc, skills_header)
-
-    # ---------------------------
-    # Rebuild EXPERIENCE section
-    # ---------------------------
-    if exp_idx is not None and data.get('experience'):
+    # Handle EXPERIENCE section
+    if not has_experience:
+        remove_section_completely(doc, exp_header, lead_header)
+    else:
+        exp_idx = find_header_index(doc, exp_header)
+        lead_idx = find_header_index(doc, lead_header)
+        skills_idx = find_header_index(doc, skills_header)
+        
         end_header = lead_header if lead_idx is not None else skills_header if skills_idx is not None else None
         remove_between(doc, exp_header, end_header)
         insert_anchor_idx = find_header_index(doc, end_header) if end_header else None
 
-        # Iterate REVERSED so final order is correct (first item ends up closest to header)
         for job in reversed(data.get('experience', [])):
             company = job.get('company', 'Company Name')
             location = job.get('location', '')
@@ -304,15 +355,17 @@ def fill_word_template(data: dict) -> io.BytesIO:
 
             p = insert_before_index(doc, insert_anchor_idx, "")
             p.add_run(f"{company}").bold = True
-            if location:
-                r = p.add_run(f" {location}")
-                r.italic = True
+            if has_data(location):
+                r = p.add_run(f" - {location}")
+                r.italic = False
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
             p = insert_before_index(doc, insert_anchor_idx, "")
-            run1 = p.add_run(f"{position}, {detail}" if detail else f"{position}")
+            run1 = p.add_run(f"{position}")
+            if has_data(detail):
+                run1.text += f", {detail}"
             run1.italic = True
-            p.add_run(f" {start_date} -- {end_date}")
+            p.add_run(f" | {start_date} -- {end_date}")
 
             for resp in non_empty_list(job.get('responsibilities')):
                 bp = insert_before_index(doc, insert_anchor_idx, resp)
@@ -320,13 +373,13 @@ def fill_word_template(data: dict) -> io.BytesIO:
 
             insert_before_index(doc, insert_anchor_idx, "")
 
-    # ---------------------------
-    # Rebuild LEADERSHIP section
-    # ---------------------------
-    lead_idx = find_header_index(doc, lead_header)
-    skills_idx = find_header_index(doc, skills_header)
-
-    if lead_idx is not None and data.get('leadership'):
+    # Handle LEADERSHIP section
+    if not has_leadership:
+        remove_section_completely(doc, lead_header, skills_header)
+    else:
+        lead_idx = find_header_index(doc, lead_header)
+        skills_idx = find_header_index(doc, skills_header)
+        
         remove_between(doc, lead_header, skills_header if skills_idx is not None else None)
         insert_anchor_idx = find_header_index(doc, skills_header) if skills_idx is not None else None
 
@@ -340,14 +393,16 @@ def fill_word_template(data: dict) -> io.BytesIO:
 
             p = insert_before_index(doc, insert_anchor_idx, "")
             p.add_run(f"{org}").bold = True
-            if location:
-                r = p.add_run(f" {location}")
-                r.italic = True
+            if has_data(location):
+                r = p.add_run(f" - {location}")
+                r.italic = False
 
             p = insert_before_index(doc, insert_anchor_idx, "")
-            run1 = p.add_run(f"{position}, {detail}" if detail else f"{position}")
+            run1 = p.add_run(f"{position}")
+            if has_data(detail):
+                run1.text += f", {detail}"
             run1.italic = True
-            p.add_run(f" {start_date} -- {end_date}")
+            p.add_run(f" | {start_date} -- {end_date}")
 
             for resp in non_empty_list(activity.get('responsibilities')):
                 bp = insert_before_index(doc, insert_anchor_idx, resp)
@@ -355,27 +410,41 @@ def fill_word_template(data: dict) -> io.BytesIO:
 
             insert_before_index(doc, insert_anchor_idx, "")
 
-        affs = non_empty_list(data.get('affiliations'))
-        if affs:
+        if has_affiliations:
+            affs = non_empty_list(data.get('affiliations'))
             p = insert_before_index(doc, insert_anchor_idx, "")
             p.add_run('Other Affiliations: ').bold = True
-            p.add_run(', '.join(sorted(affs)))
+            p.add_run(', '.join(affs))
+            insert_before_index(doc, insert_anchor_idx, "")
 
-    # ---------------------------
-    # Update SKILLS section lines
-    # ---------------------------
-    languages = non_empty_list(data.get('languages'))
-    computers = non_empty_list(data.get('computer_skills'))
-    interests = non_empty_list(data.get('interests'))
-
-    for paragraph in doc.paragraphs:
-        t = paragraph.text
-        if 'Language:' in t and languages:
-            paragraph.text = f"Language: {', '.join(languages)}"
-        elif 'Computer:' in t and computers:
-            paragraph.text = f"Computer: {', '.join(computers)}"
-        elif 'Interests:' in t and interests:
-            paragraph.text = f"Interests: {', '.join(sorted(interests))}"
+    # Handle SKILLS section
+    if not has_skills:
+        remove_section_completely(doc, skills_header, None)
+    else:
+        # Update or remove individual skill lines
+        if has_languages:
+            languages = non_empty_list(data.get('languages'))
+            for p in doc.paragraphs:
+                if 'Language:' in p.text:
+                    p.text = f"Language: {', '.join(languages)}"
+        else:
+            remove_line_containing(doc, 'Language:')
+        
+        if has_computer:
+            computers = non_empty_list(data.get('computer_skills'))
+            for p in doc.paragraphs:
+                if 'Computer:' in p.text:
+                    p.text = f"Computer: {', '.join(computers)}"
+        else:
+            remove_line_containing(doc, 'Computer:')
+        
+        if has_interests:
+            interests = non_empty_list(data.get('interests'))
+            for p in doc.paragraphs:
+                if 'Interests:' in p.text:
+                    p.text = f"Interests: {', '.join(interests)}"
+        else:
+            remove_line_containing(doc, 'Interests:')
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -390,7 +459,7 @@ REQUIRED_FIELDS = ['name', 'email']
 def validate_structured_data(data: dict):
     if not isinstance(data, dict):
         raise ValueError("Payload must be a JSON object")
-    missing = [k for k in REQUIRED_FIELDS if not str(data.get(k, '')).strip()]
+    missing = [k for k in REQUIRED_FIELDS if not has_data(data.get(k))]
     if missing:
         raise ValueError(f"Missing required fields: {', '.join(missing)}")
 
@@ -466,15 +535,5 @@ def generate_word():
 # Entrypoint
 # ---------------------------
 if __name__ == '__main__':
-    try:
-        if os.path.exists(TEMPLATE_PATH):
-            d = Document(TEMPLATE_PATH)
-            styles_present = [s.name for s in d.styles if getattr(s, 'type', None) == WD_STYLE_TYPE.PARAGRAPH]
-            print("Template paragraph styles at startup:", styles_present)
-        else:
-            print(f"Template not found at path: {TEMPLATE_PATH}")
-    except Exception as e:
-        print(f"Could not inspect template styles: {e}")
-
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)

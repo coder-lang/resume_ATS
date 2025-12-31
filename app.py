@@ -55,11 +55,12 @@ def extract_resume_data_with_ai(resume_text: str) -> dict:
     prompt = f"""Extract structured information from this resume and return ONLY a JSON object.
 
 CRITICAL RULES:
-- Use null for ANY missing information
+- Use null for ANY missing information (never use trailing commas)
 - Use empty arrays [] for missing lists
 - Extract ALL work experience entries
 - Keep dates, names, and text EXACTLY as written
 - Never invent or assume data
+- Return VALID JSON without trailing commas
 
 JSON Format:
 {{
@@ -80,9 +81,9 @@ JSON Format:
       "location": "City, State or null",
       "graduation_date": "Date",
       "gpa": "GPA or null",
-      "honors": ["Honor 1"] or []
+      "honors": ["Honor 1"]
     }}
-  ] or [],
+  ],
   
   "experience": [
     {{
@@ -91,24 +92,24 @@ JSON Format:
       "location": "City, State or null",
       "start_date": "Date",
       "end_date": "Date or Present",
-      "achievements": ["Achievement 1", "Achievement 2"] or []
+      "achievements": ["Achievement 1", "Achievement 2"]
     }}
-  ] or [],
+  ],
   
   "projects": [
     {{
       "name": "Project Name",
       "description": "Brief description",
-      "technologies": ["Tech 1", "Tech 2"] or [],
-      "achievements": ["Achievement 1"] or []
+      "technologies": ["Tech 1", "Tech 2"],
+      "achievements": ["Achievement 1"]
     }}
-  ] or [],
+  ],
   
   "skills": {{
-    "technical": ["Skill 1", "Skill 2"] or [],
-    "languages": ["Language 1"] or [],
-    "tools": ["Tool 1"] or [],
-    "certifications": ["Cert 1"] or []
+    "technical": ["Skill 1", "Skill 2"],
+    "languages": ["Language 1"],
+    "tools": ["Tool 1"],
+    "certifications": ["Cert 1"]
   }},
   
   "leadership": [
@@ -118,21 +119,21 @@ JSON Format:
       "location": "Location or null",
       "start_date": "Date",
       "end_date": "Date or Present",
-      "achievements": ["Achievement 1"] or []
+      "achievements": ["Achievement 1"]
     }}
-  ] or []
+  ]
 }}
 
 Resume:
 {resume_text}
 
-Return ONLY valid JSON."""
+Return ONLY valid JSON without trailing commas."""
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a resume parser. Return only valid JSON with null for missing data."},
+                {"role": "system", "content": "You are a resume parser. Return only valid JSON with null for missing data. Never use trailing commas."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,
@@ -142,11 +143,31 @@ Return ONLY valid JSON."""
         
         # Clean response
         if result.startswith("```"):
-            result = result.split("```")[1]
+            parts = result.split("```")
+            result = parts[1] if len(parts) > 1 else result
         if result.lower().startswith("json"):
             result = result[4:].strip()
         
+        # Remove trailing commas (common AI mistake)
+        import re
+        result = re.sub(r',(\s*[}\]])', r'\1', result)
+        
         return json.loads(result)
+    except json.JSONDecodeError as je:
+        print(f"JSON parsing error: {str(je)}")
+        print(f"AI Response: {result[:500]}...")
+        
+        # Try to fix common JSON issues
+        try:
+            import re
+            # Remove trailing commas more aggressively
+            fixed = re.sub(r',(\s*[}\]])', r'\1', result)
+            # Remove comments if any
+            fixed = re.sub(r'//.*?\n', '\n', fixed)
+            fixed = re.sub(r'/\*.*?\*/', '', fixed, flags=re.DOTALL)
+            return json.loads(fixed)
+        except:
+            raise ValueError(f"Could not parse AI response as JSON: {str(je)}")
     except Exception as e:
         print(f"AI extraction error: {str(e)}")
         raise
